@@ -8,8 +8,8 @@ and integration with external surveys like DESI.
 
 from euclidqso.version import __version__
 
-# Core functionality (will be available as modules are implemented)
-# from euclidqso.core import data_access, cutouts, spectra, catalogs
+# Core functionality
+from euclidqso.core import data_access, spectra
 
 # Analysis modules (will be available as modules are implemented)
 # from euclidqso.analysis import (
@@ -22,19 +22,18 @@ from euclidqso.version import __version__
 # External integrations (will be available as modules are implemented)
 # from euclidqso.external import desi, wise, gaia, des
 
-# Utilities (will be available as modules are implemented)  
-# from euclidqso.utils import io, math, astro, validation
+# Utilities
+from euclidqso.utils import io
 
 # Configuration
 # from euclidqso import config
 
 __all__ = [
     "__version__",
-    # Core modules will be added as they are implemented
-    # Analysis modules will be added as they are implemented
-    # Visualization modules will be added as they are implemented
-    # External modules will be added as they are implemented
-    # Utility modules will be added as they are implemented
+    # Core
+    "data_access", "spectra",
+    # Utils
+    "io",
 ]
 
 # Package metadata

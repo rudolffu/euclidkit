@@ -12,6 +12,7 @@ from typing import Optional
 
 from euclidqso.version import __version__
 from euclidqso.config import generate_config_template
+from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra
 
 
 @click.group()
@@ -108,6 +109,12 @@ def pipeline(config_file: str, **kwargs):
     click.echo(f"Pipeline functionality not yet implemented.")
     click.echo(f"Config file: {config_file}")
     sys.exit(1)
+
+
+# Add crossmatching commands to main CLI
+main.add_command(crossmatch)
+main.add_command(query_spectra, name='query-spectra')  
+main.add_command(compile_spectra, name='compile-spectra')
 
 
 if __name__ == '__main__':
