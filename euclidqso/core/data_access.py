@@ -217,33 +217,29 @@ class EuclidArchive:
             tmp_name = tmp_file.name
         
         try:
-            # Upload table
+            # Use temporary upload with launch_job
             upload_name = f"user_batch_{np.random.randint(10000, 99999)}"
-            job = self.euclid.upload_table(
-                table_name=upload_name,
-                resource=tmp_name
-            )
             
             # Construct crossmatch query
             radius_deg = radius / 3600.0  # Convert to degrees
             
             query = f"""
-            SELECT u.*, m.object_id, m.right_ascension, m.declination,
+            SELECT u.*, 
+                   m.object_id, 
+                   m.right_ascension AS mer_ra, 
+                   m.declination AS mer_dec,
                    m.vis_det, m.det_quality_flag, m.spurious_flag,
                    m.flux_detection_total, m.flux_vis_sersic, 
                    m.flux_y_sersic, m.flux_j_sersic, m.flux_h_sersic,
                    m.segmentation_map_id, m.segmentation_area, m.kron_radius,
-                   DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) AS separation_arcsec
+                   DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) AS separation_deg
             FROM TAP_UPLOAD.{upload_name} AS u
-            JOIN {mer_table} AS m
-            ON 1 = CONTAINS(
-                CIRCLE('ICRS', u.{ra_col}, u.{dec_col}, {radius_deg}),
-                POINT('ICRS', m.right_ascension, m.declination)
-            )
-            ORDER BY u.{ra_col}, separation_arcsec
+            JOIN {mer_table} AS m 
+            ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg}
+            ORDER BY u.{ra_col}, separation_deg
             """
             
-            # Execute query
+            # Execute query with temporary table upload
             if len(batch) < 2000:
                 job = self.euclid.launch_job(query, upload_resource=tmp_name, 
                                            upload_table_name=upload_name)
@@ -253,9 +249,11 @@ class EuclidArchive:
             
             result = job.get_results()
             
-            # Convert separation to arcseconds
-            if 'separation_arcsec' in result.colnames:
-                result['separation_arcsec'] = result['separation_arcsec'] * 3600
+            # Convert separation from degrees to arcseconds
+            if len(result) > 0 and 'separation_deg' in result.colnames:
+                result['separation_arcsec'] = result['separation_deg'] * 3600.0
+                # Remove the degree column
+                result.remove_column('separation_deg')
             
             return result
             
