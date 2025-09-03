@@ -1,0 +1,13 @@
+# Include additional files in package distribution
+include README.md
+include LICENSE
+include requirements*.txt
+include MANIFEST.in
+recursive-include euclidqso/data *
+recursive-include docs *.rst *.py *.md
+recursive-include examples *.py *.ipynb *.yaml *.yml
+prune docs/build
+prune .git
+prune __pycache__
+global-exclude *.pyc
+global-exclude .DS_Store

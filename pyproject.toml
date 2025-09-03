@@ -1,0 +1,173 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "euclidqso"
+dynamic = ["version"]
+description = "Euclid QSO Analysis Package"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Yuming Fu", email = "fuympku@outlook.com"}
+]
+maintainers = [
+    {name = "Yuming Fu", email = "fuympku@outlook.com"}
+]
+keywords = ["astronomy", "euclid", "qso", "spectroscopy", "photometry"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.19.0",
+    "scipy>=1.6.0",
+    "matplotlib>=3.3.0",
+    "astropy>=4.0.0",
+    "astroquery>=0.4.0",
+    "pandas>=1.2.0",
+    "photutils>=1.0.0",
+    "sep>=1.2.0",
+    "scikit-image>=0.18.0",
+    "tqdm>=4.50.0",
+    "pyyaml>=5.4.0",
+    "click>=8.0.0",
+    "requests>=2.25.0",
+]
+
+[project.optional-dependencies]
+desi = [
+    "sparcl-client>=1.0.0",
+]
+visualization = [
+    "jdaviz>=2.0.0",
+    "bokeh>=2.0.0",
+    "plotly>=5.0.0",
+]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.10.0",
+    "black>=21.0.0",
+    "isort>=5.0.0",
+    "flake8>=3.8.0",
+    "mypy>=0.800",
+    "pre-commit>=2.10.0",
+    "sphinx>=4.0.0",
+    "sphinx-rtd-theme>=0.5.0",
+    "jupyter>=1.0.0",
+    "ipython>=7.20.0",
+]
+complete = [
+    "euclidqso[desi,visualization,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/rudolffu/euclidqso"
+Documentation = "https://euclidqso.readthedocs.io"
+Repository = "https://github.com/rudolffu/euclidqso"
+"Bug Tracker" = "https://github.com/rudolffu/euclidqso/issues"
+
+[project.scripts]
+euclidqso = "euclidqso.cli.main:main"
+euclidqso-cutouts = "euclidqso.cli.cutout_cli:main"
+euclidqso-spectra = "euclidqso.cli.spec_cli:main"
+euclidqso-composite = "euclidqso.cli.composite_cli:main"
+euclidqso-pipeline = "euclidqso.cli.main:pipeline"
+
+[tool.setuptools]
+packages = ["euclidqso"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "euclidqso.version.__version__"}
+
+[tool.setuptools.package-data]
+euclidqso = [
+    "data/templates/*",
+    "data/filters/*", 
+    "data/config/*",
+]
+
+# Development tools configuration
+[tool.black]
+line-length = 88
+target-version = ['py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["euclidqso"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=euclidqso",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["euclidqso"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+ignore_missing_imports = true

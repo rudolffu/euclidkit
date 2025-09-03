@@ -1,0 +1,23 @@
+data:
+  euclid_volumes:
+    q1: /data/euclid_q1/
+    ero: /data/euc_ero_data_01/
+  credentials_file: /media/user/cred.txt
+  cache_dir: /Users/yuming/.euclidqso/cache
+analysis:
+  redshift:
+    method: xcorr
+    z_range:
+    - 0.0
+    - 6.0
+    template_dir: null
+  spectroscopy:
+    snr_min: 3.0
+    wavelength_range:
+    - 3500
+    - 25000
+output:
+  format: fits
+  compression: true
+  plot_format: png
+  plot_dpi: 150
