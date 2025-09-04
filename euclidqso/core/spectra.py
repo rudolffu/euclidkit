@@ -197,14 +197,12 @@ class SpectrumCompiler:
                     
                     # Add metadata to header
                     spectrum_hdu.header['SOURCE_ID'] = source[source_id_col]
-                    spectrum_hdu.header['ORIG_FILE'] = source[file_name_col]
-                    spectrum_hdu.header['ORIG_HDU'] = source[hdu_index_col]
                     
                     if 'ra_obj' in source.colnames:
-                        spectrum_hdu.header['RA_OBJ'] = source['ra_obj']
+                        spectrum_hdu.header['RA'] = source['ra_obj']
                     if 'dec_obj' in source.colnames:
-                        spectrum_hdu.header['DEC_OBJ'] = source['dec_obj']
-                    
+                        spectrum_hdu.header['DEC'] = source['dec_obj']
+
                     hdul_new.append(spectrum_hdu)
                     
                 except Exception as e:
