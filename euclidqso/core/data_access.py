@@ -262,6 +262,50 @@ class EuclidArchive:
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
     
+    def _query_spectra_batch(self, batch: Table) -> Table:
+        """Query spectra for a batch of object IDs."""
+        
+        # Upload user table to archive for querying
+        with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
+            batch.write(tmp_file.name, format='votable', overwrite=True)
+            tmp_name = tmp_file.name
+        
+        try:
+            # Use temporary upload with launch_job
+            upload_name = f"user_spectra_batch_{np.random.randint(10000, 99999)}"
+            
+            # Construct spectra query
+            query = f"""
+            SELECT s.source_id, s.ra_obj, s.dec_obj, s.datalabs_path, 
+                   s.file_name, s.hdu_index,
+                   u.object_id
+            FROM TAP_UPLOAD.{upload_name} AS u
+            JOIN sedm.spectra_source AS s
+            ON s.source_id = u.object_id
+            WHERE s.datalabs_path IS NOT NULL
+            ORDER BY s.source_id
+            """
+            
+            # Execute query with temporary table upload
+            if len(batch) < 2000:
+                job = self.euclid.launch_job(query, upload_resource=tmp_name, 
+                                           upload_table_name=upload_name)
+            else:
+                job = self.euclid.launch_job_async(query, upload_resource=tmp_name,
+                                                 upload_table_name=upload_name)
+            
+            result = job.get_results()
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error querying spectra batch: {e}")
+            return Table()
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+    
     def query_spectra_sources(
         self, 
         object_ids: Optional[List[int]] = None,
@@ -299,44 +343,23 @@ class EuclidArchive:
         
         logger.info(f"Querying spectra for {len(object_ids)} unique objects")
         
-        # Query in batches to avoid query limits
+        # Create user table with object IDs
+        user_table = Table()
+        user_table['object_id'] = object_ids
+        
+        # Query in batches to avoid query limits  
         batch_size = 1000
         all_results = []
         
-        for i in range(0, len(object_ids), batch_size):
-            batch_ids = object_ids[i:i+batch_size]
-            logger.info(f"Querying batch {i//batch_size + 1}/{(len(object_ids)-1)//batch_size + 1}")
+        for i in range(0, len(user_table), batch_size):
+            batch = user_table[i:i+batch_size]
+            logger.info(f"Querying batch {i//batch_size + 1}/{(len(user_table)-1)//batch_size + 1}")
             
-            # Create IN clause for object IDs
-            ids_str = ','.join(map(str, batch_ids))
+            batch_result = self._query_spectra_batch(batch)
             
-            query = f"""
-            SELECT s.source_id, s.ra_obj, s.dec_obj, s.datalabs_path, 
-                   s.file_name, s.hdu_index, s.instrument_name,
-                   m.object_id, m.right_ascension, m.declination
-            FROM sedm.spectra_source AS s
-            JOIN {self._get_mer_table_name()} AS m
-            ON s.source_id = m.object_id
-            WHERE m.object_id IN ({ids_str})
-            AND s.datalabs_path IS NOT NULL
-            ORDER BY s.source_id
-            """
-            
-            try:
-                if len(batch_ids) < 2000:
-                    job = self.euclid.launch_job(query)
-                else:
-                    job = self.euclid.launch_job_async(query)
-                
-                batch_result = job.get_results()
-                
-                if len(batch_result) > 0:
-                    all_results.append(batch_result)
-                    logger.info(f"Found {len(batch_result)} spectra in batch")
-                
-            except Exception as e:
-                logger.error(f"Error querying batch: {e}")
-                continue
+            if len(batch_result) > 0:
+                all_results.append(batch_result)
+                logger.info(f"Found {len(batch_result)} spectra in batch")
         
         if all_results:
             final_result = Table(np.concatenate([r for r in all_results]))
@@ -352,6 +375,102 @@ class EuclidArchive:
             logger.info(f"Saved spectral source results to {output_file}")
         
         return final_result
+    
+    def get_individual_spectrum(
+        self,
+        datalabs_path: str,
+        file_name: str,
+        hdu_index: int
+    ):
+        """
+        Get an individual spectrum HDU from a combined spectra file.
+        
+        This is a convenience wrapper around SpectrumLoader.
+        
+        Parameters
+        ----------
+        datalabs_path : str
+            Path to the data directory on ESA Datalabs
+        file_name : str
+            Name of the combined spectra FITS file
+        hdu_index : int
+            HDU index of the specific spectrum
+            
+        Returns
+        -------
+        fits.HDU
+            Individual spectrum HDU
+        """
+        from euclidqso.core.spectra import SpectrumLoader
+        
+        loader = SpectrumLoader()
+        file_path = loader.verify_spectrum_path(datalabs_path, file_name)
+        if file_path is None:
+            raise FileNotFoundError(f"Spectra file not found: {os.path.join(datalabs_path, file_name)}")
+        
+        return loader.load_spectrum(file_path, hdu_index)
+    
+    def combine_spectra_to_fits(
+        self,
+        spectra_table: Table,
+        output_file: Union[str, Path],
+        source_id_col: str = 'source_id',
+        datalabs_path_col: str = 'datalabs_path',
+        file_name_col: str = 'file_name',
+        hdu_index_col: str = 'hdu_index',
+        max_spectra: Optional[int] = None
+    ) -> str:
+        """
+        Combine individual spectra into a single FITS file.
+        
+        This function replicates the functionality from cell 23 of the 
+        Spectra_visualization_catglobe.ipynb notebook, using the 
+        existing SpectrumCompiler infrastructure.
+        
+        Parameters
+        ----------
+        spectra_table : Table
+            Table containing spectra source information from query_spectra_sources
+        output_file : str or Path
+            Output FITS file path
+        source_id_col : str, default 'source_id'
+            Column name for source IDs
+        datalabs_path_col : str, default 'datalabs_path'
+            Column name for datalabs paths
+        file_name_col : str, default 'file_name'
+            Column name for file names
+        hdu_index_col : str, default 'hdu_index'
+            Column name for HDU indices
+        max_spectra : int, optional
+            Maximum number of spectra to include (for testing)
+            
+        Returns
+        -------
+        str
+            Path to the created FITS file
+        """
+        from euclidqso.core.spectra import SpectrumCompiler
+        
+        # Limit number of spectra if requested
+        if max_spectra is not None:
+            spectra_subset = spectra_table[:max_spectra]
+        else:
+            spectra_subset = spectra_table
+        
+        logger.info(f"Combining {len(spectra_subset)} spectra into {output_file}")
+        
+        # Use SpectrumCompiler's convenience method for single-file output
+        compiler = SpectrumCompiler()
+        
+        return compiler.compile_single_fits(
+            spectra_subset,
+            output_file=output_file,
+            source_id_col=source_id_col,
+            datalabs_path_col=datalabs_path_col,
+            file_name_col=file_name_col,
+            hdu_index_col=hdu_index_col,
+            overwrite=True
+        )
     
     def __enter__(self):
         return self

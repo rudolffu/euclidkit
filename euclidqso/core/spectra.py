@@ -292,6 +292,78 @@ class SpectrumCompiler:
         logger.info(f"Saved metadata table to {output_path}")
         
         return str(output_path)
+    
+    def compile_single_fits(
+        self,
+        spectra_table: Table,
+        output_file: Union[str, Path],
+        source_id_col: str = 'source_id',
+        datalabs_path_col: str = 'datalabs_path',
+        file_name_col: str = 'file_name',
+        hdu_index_col: str = 'hdu_index',
+        overwrite: bool = True
+    ) -> str:
+        """
+        Compile spectra into a single FITS file.
+        
+        This is a convenience method for creating a single FITS file
+        containing all spectra, similar to the notebook cell 23 pattern.
+        
+        Parameters
+        ----------
+        spectra_table : Table
+            Table with spectral source information
+        output_file : str or Path
+            Output FITS file path
+        source_id_col : str, default 'source_id'
+            Column name for source IDs
+        datalabs_path_col : str, default 'datalabs_path'
+            Column name for datalabs paths
+        file_name_col : str, default 'file_name'
+            Column name for file names
+        hdu_index_col : str, default 'hdu_index'
+            Column name for HDU indices
+        overwrite : bool, default True
+            Whether to overwrite existing files
+            
+        Returns
+        -------
+        str
+            Path to output file
+        """
+        output_path = Path(output_file)
+        output_dir = output_path.parent
+        output_stem = output_path.stem
+        
+        # Temporarily set max_extensions to accommodate all spectra
+        original_max = self.max_extensions
+        self.max_extensions = len(spectra_table) + 1000
+        
+        try:
+            output_files = self.compile_spectra(
+                spectra_table,
+                output_dir=output_dir,
+                output_prefix=output_stem,
+                source_id_col=source_id_col,
+                datalabs_path_col=datalabs_path_col,
+                file_name_col=file_name_col,
+                hdu_index_col=hdu_index_col,
+                overwrite=overwrite
+            )
+            
+            if len(output_files) == 1:
+                # Rename the chunked file to the requested name
+                chunked_file = Path(output_files[0])
+                if chunked_file != output_path:
+                    chunked_file.rename(output_path)
+                return str(output_path)
+            else:
+                logger.warning(f"Expected single file but got {len(output_files)} files")
+                return output_files[0] if output_files else None
+                
+        finally:
+            # Restore original max_extensions
+            self.max_extensions = original_max
 
 
 class SpectrumProcessor:

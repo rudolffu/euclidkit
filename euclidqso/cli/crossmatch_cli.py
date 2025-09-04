@@ -99,18 +99,27 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
               help='Comma-separated list of object IDs')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output spectral sources file')
+@click.option('--combine-output', type=click.Path(),
+              help='Output FITS file for combined spectra (auto-generates after query)')
+@click.option('--max-spectra', type=int,
+              help='Maximum number of spectra to include in combined output')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def query_spectra(crossmatch: Optional[str], object_ids: Optional[str], output: str,
+                  combine_output: Optional[str], max_spectra: Optional[int],
                   environment: str, credentials: Optional[str], verbose: bool):
     """
     Query spectral sources for objects from crossmatch or object ID list.
     
     This command queries the sedm.spectra_source table to find available
     spectra for objects identified in crossmatching or provided as a list.
+    
+    If --combine-output is provided, automatically combines the found spectra
+    into a single FITS file after querying, similar to cell 23 in the 
+    Spectra_visualization_catglobe.ipynb notebook.
     """
     import logging
     if verbose:
@@ -171,6 +180,28 @@ def query_spectra(crossmatch: Optional[str], object_ids: Optional[str], output: 
                 click.echo("Spectra by instrument:")
                 for instrument, count in instruments.items():
                     click.echo(f"  {instrument}: {count}")
+            
+            # Generate combined FITS file if requested
+            if combine_output:
+                if verbose:
+                    click.echo(f"\nGenerating combined spectra FITS file...")
+                    if max_spectra:
+                        click.echo(f"Limiting to {max_spectra} spectra")
+                
+                try:
+                    combined_file = archive.combine_spectra_to_fits(
+                        spectra_table=results,
+                        output_file=combine_output,
+                        max_spectra=max_spectra
+                    )
+                    
+                    n_combined = min(len(results), max_spectra) if max_spectra else len(results)
+                    click.echo(f"Combined FITS file created: {combined_file}")
+                    click.echo(f"Contains {n_combined} spectra extensions")
+                    
+                except Exception as e:
+                    click.echo(f"Warning: Failed to create combined FITS file: {e}", err=True)
+                    # Don't exit - the query was successful
         
     except Exception as e:
         click.echo(f"Error querying spectra: {e}", err=True)
