@@ -526,8 +526,7 @@ class EuclidArchive:
                 os.unlink(tmp_name)
     
     def query_spectra_sources(
-        self, 
-        object_ids: Optional[List[int]] = None,
+        self,
         crossmatch_table: Optional[Table] = None,
         output_file: Optional[Union[str, Path]] = None
     ) -> Table:
@@ -536,8 +535,6 @@ class EuclidArchive:
         
         Parameters
         ----------
-        object_ids : list of int, optional
-            List of object IDs to query
         crossmatch_table : Table, optional
             Table with object_id column from crossmatch results
         output_file : str or Path, optional
@@ -553,12 +550,15 @@ class EuclidArchive:
             self.login()
         
         # Determine object IDs to query
-        if object_ids is None and crossmatch_table is not None:
-            if 'object_id' not in crossmatch_table.colnames:
-                raise ValueError("crossmatch_table must contain 'object_id' column")
-            object_ids = list(set(crossmatch_table['object_id']))
-        elif object_ids is None:
-            raise ValueError("Must provide either object_ids or crossmatch_table")
+        if crossmatch_table is None:
+            raise ValueError("Must provide crossmatch_table with 'object_id' or 'object_id_euclid'")
+        # Accept either object_id or object_id_euclid
+        if 'object_id' in crossmatch_table.colnames:
+            object_ids = list(set([int(x) for x in crossmatch_table['object_id']]))
+        elif 'object_id_euclid' in crossmatch_table.colnames:
+            object_ids = list(set([int(x) for x in crossmatch_table['object_id_euclid']]))
+        else:
+            raise ValueError("crossmatch_table must contain 'object_id' or 'object_id_euclid'")
         
         logger.info(f"Querying spectra for {len(object_ids)} unique objects")
         

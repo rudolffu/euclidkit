@@ -104,10 +104,8 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
 
 
 @click.command()
-@click.option('--crossmatch', '-x', type=click.Path(exists=True),
-              help='Crossmatch results file (contains object_id column)')
-@click.option('--object-ids', type=str,
-              help='Comma-separated list of object IDs')
+@click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
+              help='Input crossmatch results file (must contain Euclid object_id)')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output spectral sources file')
 @click.option('--combine-output', type=click.Path(),
@@ -119,7 +117,7 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-def query_spectra(crossmatch: Optional[str], object_ids: Optional[str], output: str,
+def query_spectra(crossmatch: Optional[str], output: str,
                   combine_output: Optional[str], max_spectra: Optional[int],
                   environment: str, credentials: Optional[str], verbose: bool):
     """
@@ -136,8 +134,9 @@ def query_spectra(crossmatch: Optional[str], object_ids: Optional[str], output: 
     if verbose:
         logging.basicConfig(level=logging.INFO)
     
-    if not crossmatch and not object_ids:
-        click.echo("Error: Must provide either --crossmatch file or --object-ids list", err=True)
+    # crossmatch is required by Click; double-check for clarity
+    if not crossmatch:
+        click.echo("Error: Must provide --crossmatch file", err=True)
         sys.exit(1)
     
     try:
@@ -153,28 +152,16 @@ def query_spectra(crossmatch: Optional[str], object_ids: Optional[str], output: 
         if verbose:
             click.echo(f"Connected to {environment} environment")
         
-        # Prepare object IDs
-        if object_ids:
-            id_list = [int(x.strip()) for x in object_ids.split(',')]
-            if verbose:
-                click.echo(f"Using {len(id_list)} object IDs from command line")
-        else:
-            crossmatch_table = load_table(crossmatch)
-            id_list = None
-            if verbose:
-                click.echo(f"Using crossmatch table: {crossmatch}")
+        # Load crossmatch table
+        crossmatch_table = load_table(crossmatch)
+        if verbose:
+            click.echo(f"Using crossmatch table: {crossmatch}")
         
         # Query spectra
-        if object_ids:
-            results = archive.query_spectra_sources(
-                object_ids=id_list,
-                output_file=output
-            )
-        else:
-            results = archive.query_spectra_sources(
-                crossmatch_table=crossmatch_table,
-                output_file=output
-            )
+        results = archive.query_spectra_sources(
+            crossmatch_table=crossmatch_table,
+            output_file=output
+        )
         
         # Report results
         click.echo(f"Spectral query completed: {len(results)} spectra found")

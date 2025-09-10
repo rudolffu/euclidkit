@@ -340,33 +340,33 @@ class TestQuerySpectraCLI:
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 
-    def test_query_spectra_with_object_ids(self):
-        """Test query-spectra with object ID list."""
-        with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-            with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
-                mock_archive = Mock()
-                mock_archive_class.return_value = mock_archive
-                
-                mock_spectra = Table({
-                    'object_id': [100001, 100002, 100003],
-                    'spectrum_id': ['spec_1', 'spec_2', 'spec_3']
-                })
-                mock_archive.query_spectra_sources.return_value = mock_spectra
-                
-                result = self.runner.invoke(query_spectra, [
-                    '--object-ids', '100001,100002,100003',
-                    '--output', output_file.name
-                ])
-                
-                assert result.exit_code == 0
-                assert "Spectral query completed: 3 spectra found" in result.output
-                
-                # Check that object IDs were parsed correctly
-                call_args = mock_archive.query_spectra_sources.call_args
-                assert call_args[1]['object_ids'] == [100001, 100002, 100003]
-                
-        if os.path.exists(output_file.name):
-            os.unlink(output_file.name)
+    def test_query_spectra_with_crossmatch_only(self):
+        """Test query-spectra requires crossmatch and loads it."""
+        crossmatch_file = self.create_temp_crossmatch_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+
+                    mock_spectra = Table({
+                        'object_id': [100001, 100002, 100003],
+                        'spectrum_id': ['spec_1', 'spec_2', 'spec_3']
+                    })
+                    mock_archive.query_spectra_sources.return_value = mock_spectra
+
+                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
+                        result = self.runner.invoke(query_spectra, [
+                            '--crossmatch', crossmatch_file,
+                            '--output', output_file.name
+                        ])
+
+                    assert result.exit_code == 0
+                    assert "Spectral query completed: 3 spectra found" in result.output
+        finally:
+            os.unlink(crossmatch_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
 
     def test_query_spectra_no_input_error(self):
         """Test error when no input provided."""
@@ -376,7 +376,7 @@ class TestQuerySpectraCLI:
             ])
             
             assert result.exit_code == 1
-            assert "Must provide either --crossmatch file or --object-ids list" in result.output
+            assert "Must provide --crossmatch file" in result.output
             
         if os.path.exists(output_file.name):
             os.unlink(output_file.name)
@@ -395,11 +395,12 @@ class TestQuerySpectraCLI:
                 })
                 mock_archive.query_spectra_sources.return_value = mock_spectra
                 
-                result = self.runner.invoke(query_spectra, [
-                    '--object-ids', '100001,100002',
-                    '--output', output_file.name,
-                    '--verbose'
-                ])
+                with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
+                    result = self.runner.invoke(query_spectra, [
+                        '--crossmatch', 'dummy.fits',
+                        '--output', output_file.name,
+                        '--verbose'
+                    ])
                 
                 assert result.exit_code == 0
                 assert "Spectra by instrument:" in result.output

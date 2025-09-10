@@ -222,19 +222,18 @@ class TestEuclidArchive:
         assert isinstance(result, Table)
         assert 'spectrum_id' in result.colnames
 
-    def test_query_spectra_sources_with_object_ids(self):
-        """Test spectral source querying with object ID list."""
-        object_ids = [100001, 100002, 100003]
+    def test_query_spectra_sources_with_crossmatch_ids(self):
+        """Test spectral source querying using object IDs from crossmatch table."""
+        cross_tab = Table({
+            'object_id': [100001, 100002, 100003],
+        })
         mock_spectra = Table({
-            'object_id': object_ids,
+            'object_id': [100001, 100002, 100003],
             'instrument_name': ['NISP', 'VIS', 'NISP'],
             'spectrum_id': ['spec_1', 'spec_2', 'spec_3']
         })
-        
-        self.mock_client.query_object_async.return_value.get_results.return_value = mock_spectra
-        
-        result = self.archive.query_spectra_sources(object_ids=object_ids)
-        
+        self.mock_client.launch_job.return_value.get_results.return_value = mock_spectra
+        result = self.archive.query_spectra_sources(crossmatch_table=cross_tab)
         assert isinstance(result, Table)
         assert len(result) == 3
 
@@ -248,8 +247,9 @@ class TestEuclidArchive:
             self.mock_client.query_object_async.return_value.get_results.return_value = mock_spectra
             
             with patch('astropy.table.Table.write') as mock_write:
+                cross_tab = Table({'object_id': [100001]})
                 result = self.archive.query_spectra_sources(
-                    object_ids=[100001],
+                    crossmatch_table=cross_tab,
                     output_file=output_path
                 )
                 
@@ -260,7 +260,7 @@ class TestEuclidArchive:
 
     def test_query_spectra_sources_error_no_input(self):
         """Test error when no input provided to query_spectra_sources."""
-        with pytest.raises(ValueError, match="Must provide either crossmatch_table or object_ids"):
+        with pytest.raises(ValueError, match="Must provide crossmatch_table"):
             self.archive.query_spectra_sources()
 
     def test_batch_processing(self):
