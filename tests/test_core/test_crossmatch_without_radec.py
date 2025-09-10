@@ -1,0 +1,36 @@
+"""Ensure object-id mode does not require RA/Dec columns."""
+
+from unittest.mock import Mock, patch
+
+from astropy.table import Table
+
+from euclidqso.core.data_access import EuclidArchive
+
+
+def test_crossmatch_sources_object_id_only_table(monkeypatch):
+    # Table lacks 'ra'/'dec' but has object_id_euclid and euclid RA/Dec columns
+    user_table = Table({
+        'object_id_euclid': [111, 222],
+        'right_ascension_euclid': [150.0, 151.0],
+        'declination_euclid': [2.0, 2.1],
+    })
+
+    arch = EuclidArchive(environment='REG')
+    arch.euclid = Mock()
+
+    # Patch _crossmatch_batch to avoid ADQL and just echo input
+    with patch.object(arch, '_crossmatch_batch', return_value=Table({'object_id': [111, 222]})) as mock_batch:
+        out = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            ra_col='ra',  # intentionally missing
+            dec_col='dec',  # intentionally missing
+            use_object_id=True,
+        )
+
+        assert len(out) == 2
+        # Verify _crossmatch_batch was called with use_object_id=True
+        assert mock_batch.called
+        _, kwargs = mock_batch.call_args
+        assert kwargs['use_object_id'] is True
+

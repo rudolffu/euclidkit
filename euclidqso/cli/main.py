@@ -13,6 +13,7 @@ from typing import Optional
 from euclidqso.version import __version__
 from euclidqso.config import generate_config_template
 from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra
+from euclidqso.cli.cutout_cli import cutouts
 
 
 @click.group()
@@ -111,10 +112,11 @@ def pipeline(config_file: str, **kwargs):
     sys.exit(1)
 
 
-# Add crossmatching commands to main CLI
+# Add commands to main CLI
 main.add_command(crossmatch)
 main.add_command(query_spectra, name='query-spectra')  
 main.add_command(compile_spectra, name='compile-spectra')
+main.add_command(cutouts)
 
 
 if __name__ == '__main__':

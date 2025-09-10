@@ -30,10 +30,12 @@ from euclidqso.utils.io import load_table
               help='Credentials file path')
 @click.option('--max-sources', type=int,
               help='Maximum number of sources to process')
+@click.option('--match-mode', type=click.Choice(['auto', 'object-id', 'spatial']), default='auto',
+              help='Matching mode: auto (default), object-id, or spatial')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str,
                environment: str, credentials: Optional[str], max_sources: Optional[int],
-               verbose: bool):
+               match_mode: str, verbose: bool):
     """
     Crossmatch user source table with Euclid MER catalogue.
     
@@ -58,9 +60,17 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
             click.echo(f"Connected to {environment} environment")
             click.echo(f"Input table: {input}")
             click.echo(f"Search radius: {radius} arcsec")
+            click.echo(f"Match mode: {match_mode}")
             if max_sources:
                 click.echo(f"Processing max {max_sources} sources")
         
+        # Map match mode to use_object_id flag
+        use_object_id = None
+        if match_mode == 'object-id':
+            use_object_id = True
+        elif match_mode == 'spatial':
+            use_object_id = False
+
         # Perform crossmatch
         results = archive.crossmatch_sources(
             user_table=input,
@@ -68,7 +78,8 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
             output_file=output,
             ra_col=ra_col,
             dec_col=dec_col,
-            max_sources=max_sources
+            max_sources=max_sources,
+            use_object_id=use_object_id
         )
         
         # Report results
@@ -76,7 +87,7 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
         click.echo(f"Results saved to: {output}")
         
         # Show summary statistics
-        if len(results) > 0:
+        if len(results) > 0 and 'separation_arcsec' in results.colnames:
             separations = results['separation_arcsec']
             click.echo(f"Separation statistics (arcsec):")
             click.echo(f"  Min: {separations.min():.3f}")

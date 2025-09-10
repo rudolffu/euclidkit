@@ -227,6 +227,66 @@ class TestCrossmatchCLI:
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 
+    def test_crossmatch_match_mode_object_id(self):
+        """Test crossmatch with object-id match mode and no separation stats."""
+        input_file = self.create_temp_input_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_results = Table({
+                        'object_id': [100001, 100002],
+                    })
+                    mock_archive.crossmatch_sources.return_value = mock_results
+
+                    result = self.runner.invoke(crossmatch, [
+                        '--input', input_file,
+                        '--output', output_file.name,
+                        '--match-mode', 'object-id'
+                    ])
+
+                    assert result.exit_code == 0
+                    # Ensure flag propagated
+                    call_args = mock_archive.crossmatch_sources.call_args
+                    assert call_args[1]['use_object_id'] is True
+                    # No separation stats printed
+                    assert 'Separation statistics' not in result.output
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_crossmatch_match_mode_spatial(self):
+        """Test crossmatch with spatial match mode forces spatial path."""
+        input_file = self.create_temp_input_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_results = Table({
+                        'object_id': [100001],
+                        'separation_arcsec': [0.3],
+                    })
+                    mock_archive.crossmatch_sources.return_value = mock_results
+
+                    result = self.runner.invoke(crossmatch, [
+                        '--input', input_file,
+                        '--output', output_file.name,
+                        '--match-mode', 'spatial'
+                    ])
+
+                    assert result.exit_code == 0
+                    call_args = mock_archive.crossmatch_sources.call_args
+                    assert call_args[1]['use_object_id'] is False
+                    # Separation stats present in output in this path
+                    assert 'Separation statistics' in result.output
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
 
 class TestQuerySpectraCLI:
     """Test cases for query-spectra CLI command."""

@@ -83,8 +83,10 @@ euclidqso-composite = "euclidqso.cli.composite_cli:main"
 euclidqso-pipeline = "euclidqso.cli.main:pipeline"
 
 [tool.setuptools]
-packages = ["euclidqso"]
 include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["euclidqso*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "euclidqso.version.__version__"}

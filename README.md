@@ -18,7 +18,7 @@ The package integrates with other specialized tools (`specbox` and `qsofitmore`)
 
 ### Requirements
 
-- Python 3.8+
+- Python 3.9+
 - Access to ESA Datalabs environment (for data volumes)
 - COSMOS credentials for Euclid archive access
 
@@ -369,7 +369,7 @@ For detailed documentation and examples, visit:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 

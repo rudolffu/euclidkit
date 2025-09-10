@@ -82,7 +82,7 @@ extras_require["complete"] = [
 entry_points = {
     "console_scripts": [
         "euclidqso=euclidqso.cli.main:main",
-        "euclidqso-cutouts=euclidqso.cli.cutout_cli:main",
+        "euclidqso-cutouts=euclidqso.cli.cutout_cli:cutouts",
         "euclidqso-spectra=euclidqso.cli.spec_cli:main", 
         "euclidqso-composite=euclidqso.cli.composite_cli:main",
         "euclidqso-pipeline=euclidqso.cli.main:pipeline",

@@ -8,7 +8,6 @@ import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
-import pkg_resources
 
 
 class EuclidQSOConfig:
