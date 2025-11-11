@@ -202,6 +202,34 @@ class TestCrossmatchCLI:
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 
+    def test_crossmatch_full_async_option(self):
+        """Full async flag should disable batching and propagate to archive."""
+        input_file = self.create_temp_input_file()
+        
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
+                    
+                    result = self.runner.invoke(crossmatch, [
+                        '--input', input_file,
+                        '--output', output_file.name,
+                        '--full-async',
+                        '--verbose'
+                    ])
+                    
+                    assert result.exit_code == 0
+                    assert "Full-table async mode enabled" in result.output
+                    call_args = mock_archive.crossmatch_sources.call_args
+                    assert call_args[1]['full_async'] is True
+                    
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
     def test_crossmatch_idr_wide_prefix(self):
         """IDR environment should prefix output filename and default to WIDE."""
         input_file = self.create_temp_input_file()

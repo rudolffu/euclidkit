@@ -102,6 +102,12 @@ euclidqso crossmatch \
     --radius 1.0 \
     --verbose
 
+# Submit the entire table as a single async job (no batching)
+euclidqso crossmatch \
+    --input my_sources.csv \
+    --output crossmatch_results.fits \
+    --full-async
+
 # When using the IDR environment the command defaults to the WIDE field and
 # writes results to wide_<filename>. Use --idr-field DEEP to query the deep stack:
 euclidqso crossmatch \

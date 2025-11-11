@@ -181,6 +181,7 @@ class EuclidArchive:
         max_sources: Optional[int] = None,
         use_object_id: Optional[bool] = None,
         idr_field: Optional[str] = None,
+        full_async: bool = False,
     ) -> Table:
         """
         Crossmatch user table with Euclid MER catalogue.
@@ -208,6 +209,9 @@ class EuclidArchive:
         idr_field : {'WIDE', 'DEEP'}, optional
             IDR field selector. Only used when environment='IDR' and mer_table is not
             explicitly provided. Defaults to 'WIDE'.
+        full_async : bool, optional
+            If True, submit the entire user table as a single asynchronous job instead of
+            processing in 1000-source batches.
             
         Returns
         -------
@@ -277,12 +281,21 @@ class EuclidArchive:
         crossmatch_results = []
         batch_size = 1000  # Process in batches
         
-        for i in range(0, len(user_data), batch_size):
-            batch = user_data[i:i+batch_size]
-            logger.info(f"Processing batch {i//batch_size + 1}/{(len(user_data)-1)//batch_size + 1}")
+        if full_async:
+            batches = [(0, len(user_data))]
+        else:
+            batches = [(i, min(i + batch_size, len(user_data))) for i in range(0, len(user_data), batch_size)]
+        
+        total_batches = len(batches)
+        if total_batches == 0:
+            return Table()
+        
+        for idx, (start, end) in enumerate(batches, 1):
+            batch = user_data[start:end]
+            logger.info(f"Processing batch {idx}/{total_batches}")
             
             batch_result = self._crossmatch_batch(
-                batch, ra_col, dec_col, radius, mer_table, use_object_id
+                batch, ra_col, dec_col, radius, mer_table, use_object_id, force_async=full_async
             )
             
             if len(batch_result) > 0:
@@ -332,7 +345,8 @@ class EuclidArchive:
         dec_col: str, 
         radius: float, 
         mer_table: str,
-        use_object_id: Optional[bool] = None
+        use_object_id: Optional[bool] = None,
+        force_async: bool = False,
     ) -> Table:
         """Crossmatch a batch of sources."""
         
@@ -461,12 +475,14 @@ class EuclidArchive:
                 """
             
             # Execute query with temporary table upload
-            if len(batch) < 2000:
-                job = self.euclid.launch_job(query, upload_resource=tmp_name, 
-                                           upload_table_name=upload_name)
+            if force_async or len(batch) >= 2000:
+                job = self.euclid.launch_job_async(
+                    query, upload_resource=tmp_name, upload_table_name=upload_name
+                )
             else:
-                job = self.euclid.launch_job_async(query, upload_resource=tmp_name,
-                                                 upload_table_name=upload_name)
+                job = self.euclid.launch_job(
+                    query, upload_resource=tmp_name, upload_table_name=upload_name
+                )
             
             result = job.get_results()
             

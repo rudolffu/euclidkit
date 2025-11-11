@@ -94,3 +94,23 @@ def test_spatial_crossmatch_distance_expression(monkeypatch):
     distance_expr = "DISTANCE(u.RACAT, u.DECCAT, m.right_ascension, m.declination)"
     assert distance_expr in query
     assert f"ON {distance_expr} <" in query
+
+
+def test_crossmatch_sources_full_async(monkeypatch):
+    """full_async should submit a single batch and force async execution."""
+    user_table = Table({'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
+    arch = EuclidArchive(environment='PDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+
+    with patch.object(arch, '_crossmatch_batch', return_value=Table({'object_id': [1, 2]})) as mock_batch:
+        arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            full_async=True,
+            use_object_id=False,
+        )
+
+    mock_batch.assert_called_once()
+    _, kwargs = mock_batch.call_args
+    assert kwargs['force_async'] is True

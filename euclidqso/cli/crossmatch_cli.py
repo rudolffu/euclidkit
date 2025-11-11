@@ -35,10 +35,13 @@ from euclidqso.utils.io import load_table
               help='Maximum number of sources to process')
 @click.option('--match-mode', type=click.Choice(['auto', 'object-id', 'spatial']), default='auto',
               help='Matching mode: auto (default), object-id, or spatial')
+@click.option('--full-async', is_flag=True,
+              help='Upload entire table in a single asynchronous job (no batching)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str,
                environment: str, idr_field: str, credentials: Optional[str],
-               max_sources: Optional[int], match_mode: str, verbose: bool):
+               max_sources: Optional[int], match_mode: str, full_async: bool,
+               verbose: bool):
     """
     Crossmatch user source table with Euclid MER catalogue.
     
@@ -69,6 +72,8 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
                 click.echo(f"Processing max {max_sources} sources")
             if environment == 'IDR':
                 click.echo(f"IDR field: {selected_idr_field}")
+            if full_async:
+                click.echo("Full-table async mode enabled (no batching)")
 
         # Determine effective output path (IDR requires prefixed filenames)
         output_path = Path(output)
@@ -93,7 +98,8 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
             ra_col=ra_col,
             dec_col=dec_col,
             max_sources=max_sources,
-            use_object_id=use_object_id
+            use_object_id=use_object_id,
+            full_async=full_async,
         )
         if environment == 'IDR':
             crossmatch_kwargs['idr_field'] = selected_idr_field
