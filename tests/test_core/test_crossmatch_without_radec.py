@@ -1,5 +1,6 @@
 """Ensure object-id mode does not require RA/Dec columns."""
 
+import json
 from unittest.mock import Mock, patch
 
 from astropy.table import Table
@@ -96,21 +97,41 @@ def test_spatial_crossmatch_distance_expression(monkeypatch):
     assert f"ON {distance_expr} <" in query
 
 
-def test_crossmatch_sources_full_async(monkeypatch):
-    """full_async should submit a single batch and force async execution."""
+def test_crossmatch_sources_full_async(tmp_path):
+    """full_async should submit a single async job and return metadata."""
     user_table = Table({'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
     arch = EuclidArchive(environment='PDR')
     arch.euclid = Mock()
     arch._logged_in = True
 
-    with patch.object(arch, '_crossmatch_batch', return_value=Table({'object_id': [1, 2]})) as mock_batch:
-        arch.crossmatch_sources(
+    fake_job = Mock()
+    fake_job.jobid = 'job-123'
+    fake_job.phase = 'QUEUED'
+    fake_job.url = 'https://tap/job/job-123'
+    submission = {
+        'job': fake_job,
+        'query': 'SELECT 1',
+        'upload_table_name': 'user_batch_12345',
+        'row_count': len(user_table),
+    }
+
+    output_path = tmp_path / 'job_info.json'
+
+    with patch.object(arch, '_crossmatch_batch', return_value=submission) as mock_batch:
+        job_info = arch.crossmatch_sources(
             user_table=user_table,
             radius=1.0,
             full_async=True,
             use_object_id=False,
+            output_file=output_path,
         )
 
     mock_batch.assert_called_once()
     _, kwargs = mock_batch.call_args
     assert kwargs['force_async'] is True
+    assert kwargs['fetch_results'] is False
+    assert job_info['job_id'] == 'job-123'
+
+    saved = json.loads(output_path.read_text())
+    assert saved['job_id'] == 'job-123'
+    assert saved['query'] == 'SELECT 1'

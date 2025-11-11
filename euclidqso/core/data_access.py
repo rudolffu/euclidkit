@@ -6,6 +6,8 @@ Provides interfaces to Euclid science archive and data volumes.
 
 import os
 import logging
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Union, Optional, List, Dict, Any, Tuple
 import tempfile
@@ -182,7 +184,7 @@ class EuclidArchive:
         use_object_id: Optional[bool] = None,
         idr_field: Optional[str] = None,
         full_async: bool = False,
-    ) -> Table:
+    ) -> Union[Table, Dict[str, Any]]:
         """
         Crossmatch user table with Euclid MER catalogue.
         
@@ -210,13 +212,14 @@ class EuclidArchive:
             IDR field selector. Only used when environment='IDR' and mer_table is not
             explicitly provided. Defaults to 'WIDE'.
         full_async : bool, optional
-            If True, submit the entire user table as a single asynchronous job instead of
-            processing in 1000-source batches.
+            If True, submit the entire user table as a single asynchronous job and
+            write job metadata to `output_file` instead of waiting for query results.
             
         Returns
         -------
-        Table
-            Crossmatched results
+        Table or dict
+            Crossmatched results table, or async job metadata dictionary when
+            ``full_async`` is True.
         """
         if not self._logged_in:
             logger.warning("Not logged in - attempting login with default credentials")
@@ -278,6 +281,37 @@ class EuclidArchive:
                     raise ValueError(f"Dec column '{dec_col}' not found in user table")
         
         # Perform crossmatch using ADQL
+        if full_async:
+            if len(user_data) == 0:
+                raise ValueError("User table is empty; nothing to submit in full_async mode.")
+            if output_file is None:
+                raise ValueError("output_file must be provided when full_async=True to store job metadata.")
+
+            submission = self._crossmatch_batch(
+                user_data,
+                ra_col,
+                dec_col,
+                radius,
+                mer_table,
+                use_object_id,
+                force_async=True,
+                fetch_results=False,
+            )
+
+            job_info = self._build_async_job_info(
+                submission,
+                mer_table=mer_table,
+                radius=radius,
+                ra_col=ra_col,
+                dec_col=dec_col,
+                idr_field=idr_field,
+                row_count=len(user_data),
+            )
+
+            self._write_job_info(job_info, output_file)
+            logger.info(f"Saved async job info to {output_file}")
+            return job_info
+
         crossmatch_results = []
         batch_size = 1000  # Process in batches
         
@@ -295,7 +329,13 @@ class EuclidArchive:
             logger.info(f"Processing batch {idx}/{total_batches}")
             
             batch_result = self._crossmatch_batch(
-                batch, ra_col, dec_col, radius, mer_table, use_object_id, force_async=full_async
+                batch,
+                ra_col,
+                dec_col,
+                radius,
+                mer_table,
+                use_object_id,
+                force_async=False,
             )
             
             if len(batch_result) > 0:
@@ -315,6 +355,96 @@ class EuclidArchive:
             logger.info(f"Saved crossmatch results to {output_file}")
         
         return final_result
+
+    def upload_user_table(
+        self,
+        table: Union[str, Path, Table],
+        table_name: str,
+        description: Optional[str] = None,
+        fmt: Optional[str] = None,
+        overwrite: bool = False,
+        verbose: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Upload a table to the Euclid user workspace.
+
+        Parameters
+        ----------
+        table : str, Path, or astropy Table
+            Resource to upload. File paths are passed directly to TAP.
+        table_name : str
+            Destination table name (without schema qualifiers).
+        description : str, optional
+            Table description stored alongside the upload.
+        fmt : str, optional
+            Input format (e.g., 'votable', 'fits', 'csv'). If omitted and a file
+            path is provided, the format is inferred from the extension.
+        overwrite : bool, default False
+            If True, delete any existing table with the same name before upload.
+        verbose : bool, default False
+            Emit TAP upload status messages.
+
+        Returns
+        -------
+        dict
+            Metadata describing the upload request, including any job ID.
+        """
+        if not table_name:
+            raise ValueError("table_name is required for uploads")
+        table_name = table_name.strip()
+        if '.' in table_name:
+            raise ValueError("table_name must not contain '.' (schema qualifiers are not allowed)")
+
+        if not self._logged_in:
+            self.login()
+
+        resource = table
+        inferred_format = fmt
+
+        if isinstance(table, (str, Path)):
+            path = Path(table)
+            if not path.exists():
+                raise FileNotFoundError(f"Table file not found: {path}")
+            resource = str(path)
+            if inferred_format is None:
+                inferred_format = self._infer_upload_format(path.suffix.lower())
+        else:
+            # astropy Table upload
+            if inferred_format is None:
+                inferred_format = 'votable'
+
+        if overwrite:
+            try:
+                self.euclid.delete_user_table(table_name=table_name, force_removal=True, verbose=verbose)
+                logger.info(f"Removed existing table '{table_name}' prior to upload")
+            except Exception as exc:  # pragma: no cover - network errors
+                logger.warning(f"Failed to delete existing table '{table_name}': {exc}")
+
+        job = self.euclid.upload_table(
+            upload_resource=resource,
+            table_name=table_name,
+            table_description=description,
+            format=inferred_format,
+            verbose=verbose,
+        )
+
+        job_info = {
+            'table_name': table_name,
+            'format': inferred_format,
+            'job_id': getattr(job, 'jobid', None),
+            'job_phase': getattr(job, 'phase', None) or getattr(job, 'get_phase', lambda: None)(),
+            'description': description,
+            'overwrite': overwrite,
+            'resource_type': 'table' if isinstance(table, Table) else 'file',
+        }
+
+        if job_info['job_id']:
+            logger.info(f"Upload job '{job_info['job_id']}' created for table '{table_name}'")
+        else:
+            job_info['job_phase'] = job_info['job_phase'] or 'COMPLETED'
+            logger.info(f"Uploaded table '{table_name}' synchronously")
+
+        return job_info
     
     def _get_mer_table_name(self, idr_field: Optional[str] = None) -> str:
         """Get MER catalogue table name for current environment."""
@@ -337,6 +467,20 @@ class EuclidArchive:
             'REG': 'catalogue.mer_final_catalog_fits_file_regreproc1_r2'
         }
         return table_names.get(self.environment, 'catalogue.mer_catalogue')
+
+    def _infer_upload_format(self, suffix: str) -> str:
+        """Infer TAP upload format from filename suffix."""
+        mapping = {
+            '.fits': 'fits',
+            '.fit': 'fits',
+            '.csv': 'csv',
+            '.vot': 'votable',
+            '.votable': 'votable',
+            '.xml': 'votable',
+            '.ecsv': 'csv',
+            '.txt': 'csv',
+        }
+        return mapping.get(suffix.lower(), 'votable')
     
     def _crossmatch_batch(
         self, 
@@ -347,7 +491,8 @@ class EuclidArchive:
         mer_table: str,
         use_object_id: Optional[bool] = None,
         force_async: bool = False,
-    ) -> Table:
+        fetch_results: bool = True,
+    ) -> Union[Table, Dict[str, Any]]:
         """Crossmatch a batch of sources."""
         
         # Upload user table to archive for crossmatching
@@ -484,6 +629,14 @@ class EuclidArchive:
                     query, upload_resource=tmp_name, upload_table_name=upload_name
                 )
             
+            if not fetch_results:
+                return {
+                    'job': job,
+                    'query': query.strip(),
+                    'upload_table_name': upload_name,
+                    'row_count': len(batch),
+                }
+
             result = job.get_results()
             
             # Convert separation from degrees to arcseconds
@@ -513,6 +666,53 @@ class EuclidArchive:
             # Clean up temporary file
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
+
+    def _build_async_job_info(
+        self,
+        submission: Dict[str, Any],
+        mer_table: str,
+        radius: float,
+        ra_col: str,
+        dec_col: str,
+        idr_field: Optional[str],
+        row_count: int,
+    ) -> Dict[str, Any]:
+        """Create metadata dictionary for an asynchronous TAP job."""
+        job = submission.get('job')
+
+        def _get_attr(obj, attr):
+            return getattr(obj, attr, None) if obj is not None else None
+
+        job_id = _get_attr(job, 'jobid')
+        job_phase = _get_attr(job, 'phase')
+        job_url = _get_attr(job, 'url')
+        results_url = _get_attr(job, 'remote_results_location')
+
+        job_info = {
+            'type': 'euclidqso_crossmatch_async_job',
+            'environment': self.environment,
+            'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            'job_id': job_id,
+            'job_phase': job_phase,
+            'job_url': job_url,
+            'results_url': results_url,
+            'upload_table': submission.get('upload_table_name'),
+            'row_count': row_count,
+            'mer_table': mer_table,
+            'radius_arcsec': radius,
+            'ra_column': ra_col,
+            'dec_column': dec_col,
+            'idr_field': idr_field.upper() if idr_field else None,
+            'query': submission.get('query'),
+        }
+        return job_info
+
+    def _write_job_info(self, job_info: Dict[str, Any], output_path: Union[str, Path]):
+        """Write async job metadata to disk."""
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as fh:
+            json.dump(job_info, fh, indent=2)
     
     def _query_spectra_batch(self, batch: Table) -> Table:
         """Query spectra for a batch of object IDs."""

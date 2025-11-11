@@ -106,18 +106,25 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
 
         results = archive.crossmatch_sources(**crossmatch_kwargs)
         
-        # Report results
-        click.echo(f"Crossmatch completed: {len(results)} matches found")
-        click.echo(f"Results saved to: {effective_output_path}")
-        
-        # Show summary statistics
-        if len(results) > 0 and 'separation_arcsec' in results.colnames:
-            separations = results['separation_arcsec']
-            click.echo(f"Separation statistics (arcsec):")
-            click.echo(f"  Min: {separations.min():.3f}")
-            click.echo(f"  Max: {separations.max():.3f}")
-            click.echo(f"  Mean: {separations.mean():.3f}")
-            click.echo(f"  Median: {separations[len(separations)//2]:.3f}")
+        if full_async:
+            job_id = results.get('job_id')
+            click.echo("Crossmatch job submitted asynchronously.")
+            if job_id:
+                click.echo(f"Job ID: {job_id}")
+            click.echo(f"Job info saved to: {effective_output_path}")
+        else:
+            # Report results
+            click.echo(f"Crossmatch completed: {len(results)} matches found")
+            click.echo(f"Results saved to: {effective_output_path}")
+            
+            # Show summary statistics
+            if len(results) > 0 and 'separation_arcsec' in results.colnames:
+                separations = results['separation_arcsec']
+                click.echo(f"Separation statistics (arcsec):")
+                click.echo(f"  Min: {separations.min():.3f}")
+                click.echo(f"  Max: {separations.max():.3f}")
+                click.echo(f"  Mean: {separations.mean():.3f}")
+                click.echo(f"  Median: {separations[len(separations)//2]:.3f}")
         
     except Exception as e:
         click.echo(f"Error in crossmatch: {e}", err=True)
@@ -229,6 +236,64 @@ def query_spectra(crossmatch: Optional[str], output: str,
         click.echo(f"Error querying spectra: {e}", err=True)
         sys.exit(1)
     
+    finally:
+        archive.logout()
+
+
+@click.command(name='upload-table')
+@click.option('--input', '-i', required=True, type=click.Path(exists=True),
+              help='Local table file to upload (FITS, CSV, VOTable, etc.)')
+@click.option('--table-name', '-t', required=True,
+              help='Name for the table in the Euclid user workspace')
+@click.option('--description', '-d', type=str,
+              help='Optional table description stored in TAP metadata')
+@click.option('--format', '-f', 'fmt', type=str,
+              help='Explicit input format (e.g., votable, fits, csv)')
+@click.option('--overwrite/--no-overwrite', default=False, show_default=True,
+              help='Delete any existing table with the same name before uploading')
+@click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
+              default='PDR', help='Archive environment (default: PDR)')
+@click.option('--credentials', '-c', type=click.Path(exists=True),
+              help='Credentials file path')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def upload_table(input: str, table_name: str, description: Optional[str], fmt: Optional[str],
+                 overwrite: bool, environment: str, credentials: Optional[str], verbose: bool):
+    """
+    Upload a local table to the Euclid TAP user workspace.
+    """
+    import logging
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+    
+    try:
+        archive = EuclidArchive(environment=environment)
+        if credentials:
+            archive.login(credentials_file=credentials)
+        else:
+            archive.login()
+
+        result = archive.upload_user_table(
+            table=input,
+            table_name=table_name,
+            description=description,
+            fmt=fmt,
+            overwrite=overwrite,
+            verbose=verbose,
+        )
+
+        job_id = result.get('job_id')
+        if job_id:
+            click.echo(f"Upload job submitted (ID: {job_id}). Use astroquery TAP tools to monitor completion.")
+        else:
+            click.echo("Table uploaded successfully.")
+        click.echo(f"Table name: {table_name}")
+        click.echo(f"Format: {result.get('format')}")
+        if description:
+            click.echo(f"Description: {description}")
+
+    except Exception as e:
+        click.echo(f"Error uploading table: {e}", err=True)
+        sys.exit(1)
     finally:
         archive.logout()
 

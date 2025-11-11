@@ -102,7 +102,8 @@ euclidqso crossmatch \
     --radius 1.0 \
     --verbose
 
-# Submit the entire table as a single async job (no batching)
+# Submit the entire table as a single async job (no batching). The output file
+# will contain TAP job metadata instead of immediate crossmatch results.
 euclidqso crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
@@ -115,6 +116,22 @@ euclidqso crossmatch \
     --output crossmatch_results.fits \
     --environment IDR \
     --idr-field DEEP
+```
+
+### Uploading Tables
+
+```bash
+# Upload a FITS table to your Euclid TAP workspace
+euclidqso upload-table \
+    --input my_sources.fits \
+    --table-name my_workspace_table \
+    --description "Sources awaiting deep crossmatch" \
+    --overwrite
+
+# Upload CSV data as-is (format inferred automatically)
+euclidqso upload-table \
+    --input trimmed_sources.csv \
+    --table-name trimmed_sources
 ```
 
 ### Querying Spectra

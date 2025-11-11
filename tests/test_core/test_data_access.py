@@ -276,3 +276,52 @@ class TestEuclidArchive:
         assert len(results) == 2500
         assert results[0] == 0
         assert results[-1] == 4998
+
+    def test_upload_user_table_from_file(self, tmp_path):
+        """Uploading from file should infer format and allow overwrite."""
+        table_path = tmp_path / 'sample.csv'
+        table_path.write_text('ra,dec\n10.0,2.0\n')
+
+        fake_job = Mock()
+        fake_job.jobid = 'job-42'
+        fake_job.phase = 'EXECUTING'
+        self.mock_client.upload_table.return_value = fake_job
+
+        result = self.archive.upload_user_table(
+            table=table_path,
+            table_name='user_table',
+            description='demo table',
+            overwrite=True,
+            verbose=True,
+        )
+
+        self.mock_client.delete_user_table.assert_called_once_with(
+            table_name='user_table',
+            force_removal=True,
+            verbose=True,
+        )
+        self.mock_client.upload_table.assert_called_once_with(
+            upload_resource=str(table_path),
+            table_name='user_table',
+            table_description='demo table',
+            format='csv',
+            verbose=True,
+        )
+        assert result['job_id'] == 'job-42'
+        assert result['format'] == 'csv'
+
+    def test_upload_user_table_astropy_table(self):
+        """Uploading an astropy Table defaults to VOTable format."""
+        tbl = Table({'ra': [10.0], 'dec': [2.0]})
+        self.mock_client.upload_table.return_value = None
+
+        result = self.archive.upload_user_table(
+            table=tbl,
+            table_name='table_from_astropy',
+            description=None,
+        )
+
+        args, kwargs = self.mock_client.upload_table.call_args
+        assert kwargs['upload_resource'] is tbl
+        assert kwargs['format'] == 'votable'
+        assert result['resource_type'] == 'table'

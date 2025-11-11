@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from astropy.table import Table
 import numpy as np
 
-from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra
+from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
 
 
 class TestCrossmatchCLI:
@@ -211,7 +211,7 @@ class TestCrossmatchCLI:
                 with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
-                    mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
+                    mock_archive.crossmatch_sources.return_value = {'job_id': 'ABC123'}
                     
                     result = self.runner.invoke(crossmatch, [
                         '--input', input_file,
@@ -222,6 +222,9 @@ class TestCrossmatchCLI:
                     
                     assert result.exit_code == 0
                     assert "Full-table async mode enabled" in result.output
+                    assert "Crossmatch job submitted asynchronously." in result.output
+                    assert "Job ID: ABC123" in result.output
+                    assert "Job info saved to:" in result.output
                     call_args = mock_archive.crossmatch_sources.call_args
                     assert call_args[1]['full_async'] is True
                     
@@ -230,6 +233,51 @@ class TestCrossmatchCLI:
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 
+    def test_upload_table_cli_job_submission(self):
+        """Uploading a table should call archive helper and report job info."""
+        input_file = self.create_temp_input_file()
+        try:
+            with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                mock_archive = Mock()
+                mock_archive_class.return_value = mock_archive
+                mock_archive.upload_user_table.return_value = {'job_id': 'job-77', 'format': 'csv'}
+
+                result = self.runner.invoke(upload_table, [
+                    '--input', input_file,
+                    '--table-name', 'user_table',
+                    '--description', 'demo',
+                    '--format', 'csv',
+                    '--overwrite',
+                    '--environment', 'PDR'
+                ])
+
+                assert result.exit_code == 0
+                assert "Upload job submitted (ID: job-77)." in result.output
+                assert "Table name: user_table" in result.output
+                mock_archive.upload_user_table.assert_called_once()
+        finally:
+            os.unlink(input_file)
+
+    def test_upload_table_cli_success(self):
+        """Synchronous uploads should report success."""
+        input_file = self.create_temp_input_file()
+        try:
+            with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                mock_archive = Mock()
+                mock_archive_class.return_value = mock_archive
+                mock_archive.upload_user_table.return_value = {'job_id': None, 'format': 'fits'}
+
+                result = self.runner.invoke(upload_table, [
+                    '--input', input_file,
+                    '--table-name', 'table_sync',
+                    '--format', 'fits'
+                ])
+
+                assert result.exit_code == 0
+                assert "Table uploaded successfully." in result.output
+                assert "Format: fits" in result.output
+        finally:
+            os.unlink(input_file)
     def test_crossmatch_idr_wide_prefix(self):
         """IDR environment should prefix output filename and default to WIDE."""
         input_file = self.create_temp_input_file()
