@@ -34,3 +34,27 @@ def test_crossmatch_sources_object_id_only_table(monkeypatch):
         _, kwargs = mock_batch.call_args
         assert kwargs['use_object_id'] is True
 
+
+def test_crossmatch_sources_idr_field_selection(monkeypatch):
+    """Ensure IDR field selection picks the correct MER catalogue."""
+    user_table = Table({
+        'ra': [150.0],
+        'dec': [2.0],
+    })
+
+    arch = EuclidArchive(environment='IDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+
+    with patch.object(arch, '_crossmatch_batch', return_value=Table({'object_id': [123]})) as mock_batch:
+        arch.crossmatch_sources(user_table=user_table, radius=1.0)
+        arch.crossmatch_sources(user_table=user_table, radius=1.0, idr_field='DEEP')
+
+    # Two batches processed (one per invocation)
+    assert mock_batch.call_count == 2
+
+    first_call_args, _ = mock_batch.call_args_list[0]
+    second_call_args, _ = mock_batch.call_args_list[1]
+
+    assert first_call_args[4] == 'catalogue.mer_catalogue_wide'
+    assert second_call_args[4] == 'catalogue.mer_catalogue_deep'

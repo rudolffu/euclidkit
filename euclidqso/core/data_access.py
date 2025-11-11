@@ -174,12 +174,13 @@ class EuclidArchive:
         self,
         user_table: Union[str, Path, Table, pd.DataFrame],
         radius: float = 1.0,
-        mer_table: str = None,
+        mer_table: Optional[str] = None,
         output_file: Optional[Union[str, Path]] = None,
         ra_col: str = 'ra',
         dec_col: str = 'dec',
         max_sources: Optional[int] = None,
-        use_object_id: Optional[bool] = None
+        use_object_id: Optional[bool] = None,
+        idr_field: Optional[str] = None,
     ) -> Table:
         """
         Crossmatch user table with Euclid MER catalogue.
@@ -204,6 +205,9 @@ class EuclidArchive:
             Matching preference. None (default) auto-detects and uses object_id join
             when a suitable column exists; True forces equality join (warns if missing);
             False forces spatial crossmatch even if object_id is present.
+        idr_field : {'WIDE', 'DEEP'}, optional
+            IDR field selector. Only used when environment='IDR' and mer_table is not
+            explicitly provided. Defaults to 'WIDE'.
             
         Returns
         -------
@@ -233,7 +237,7 @@ class EuclidArchive:
         
         # Determine MER table name based on environment
         if mer_table is None:
-            mer_table = self._get_mer_table_name()
+            mer_table = self._get_mer_table_name(idr_field=idr_field)
         
         logger.info(f"Using MER table: {mer_table}")
         logger.info(f"Crossmatching {len(user_data)} sources with radius {radius}\"")
@@ -299,11 +303,23 @@ class EuclidArchive:
         
         return final_result
     
-    def _get_mer_table_name(self) -> str:
+    def _get_mer_table_name(self, idr_field: Optional[str] = None) -> str:
         """Get MER catalogue table name for current environment."""
+        if self.environment == 'IDR':
+            field = (idr_field or 'WIDE').upper()
+            valid_fields = {'WIDE', 'DEEP'}
+            if field not in valid_fields:
+                raise ValueError(
+                    f"Invalid IDR field '{idr_field}'. Expected one of {sorted(valid_fields)}"
+                )
+            return (
+                'catalogue.mer_catalogue_wide'
+                if field == 'WIDE'
+                else 'catalogue.mer_catalogue_deep'
+            )
+        
         table_names = {
             'PDR': 'catalogue.mer_catalogue',
-            'IDR': 'catalogue.mer_catalogue', 
             'OTF': 'catalogue.mer_catalogue',
             'REG': 'catalogue.mer_final_catalog_fits_file_regreproc1_r2'
         }

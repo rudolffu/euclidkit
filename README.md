@@ -101,6 +101,14 @@ euclidqso crossmatch \
     --output crossmatch_results.fits \
     --radius 1.0 \
     --verbose
+
+# When using the IDR environment the command defaults to the WIDE field and
+# writes results to wide_<filename>. Use --idr-field DEEP to query the deep stack:
+euclidqso crossmatch \
+    --input my_sources.csv \
+    --output crossmatch_results.fits \
+    --environment IDR \
+    --idr-field DEEP
 ```
 
 ### Querying Spectra

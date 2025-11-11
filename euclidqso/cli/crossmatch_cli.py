@@ -26,6 +26,9 @@ from euclidqso.utils.io import load_table
               help='Dec column name in input table (default: dec)')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
+@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+              show_default=True,
+              help='IDR field selection (only used when --environment=IDR)')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--max-sources', type=int,
@@ -34,8 +37,8 @@ from euclidqso.utils.io import load_table
               help='Matching mode: auto (default), object-id, or spatial')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str,
-               environment: str, credentials: Optional[str], max_sources: Optional[int],
-               match_mode: str, verbose: bool):
+               environment: str, idr_field: str, credentials: Optional[str],
+               max_sources: Optional[int], match_mode: str, verbose: bool):
     """
     Crossmatch user source table with Euclid MER catalogue.
     
@@ -56,6 +59,7 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
         else:
             archive.login()  # Use default credentials
         
+        selected_idr_field = idr_field.upper()
         if verbose:
             click.echo(f"Connected to {environment} environment")
             click.echo(f"Input table: {input}")
@@ -63,7 +67,17 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
             click.echo(f"Match mode: {match_mode}")
             if max_sources:
                 click.echo(f"Processing max {max_sources} sources")
-        
+            if environment == 'IDR':
+                click.echo(f"IDR field: {selected_idr_field}")
+
+        # Determine effective output path (IDR requires prefixed filenames)
+        output_path = Path(output)
+        effective_output_path = output_path
+        if environment == 'IDR':
+            prefix = f"{selected_idr_field.lower()}_"
+            if not output_path.name.lower().startswith(prefix):
+                effective_output_path = output_path.with_name(prefix + output_path.name)
+
         # Map match mode to use_object_id flag
         use_object_id = None
         if match_mode == 'object-id':
@@ -72,19 +86,23 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
             use_object_id = False
 
         # Perform crossmatch
-        results = archive.crossmatch_sources(
+        crossmatch_kwargs = dict(
             user_table=input,
             radius=radius,
-            output_file=output,
+            output_file=effective_output_path,
             ra_col=ra_col,
             dec_col=dec_col,
             max_sources=max_sources,
             use_object_id=use_object_id
         )
+        if environment == 'IDR':
+            crossmatch_kwargs['idr_field'] = selected_idr_field
+
+        results = archive.crossmatch_sources(**crossmatch_kwargs)
         
         # Report results
         click.echo(f"Crossmatch completed: {len(results)} matches found")
-        click.echo(f"Results saved to: {output}")
+        click.echo(f"Results saved to: {effective_output_path}")
         
         # Show summary statistics
         if len(results) > 0 and 'separation_arcsec' in results.colnames:

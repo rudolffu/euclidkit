@@ -202,6 +202,65 @@ class TestCrossmatchCLI:
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 
+    def test_crossmatch_idr_wide_prefix(self):
+        """IDR environment should prefix output filename and default to WIDE."""
+        input_file = self.create_temp_input_file()
+        
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
+                    
+                    result = self.runner.invoke(crossmatch, [
+                        '--input', input_file,
+                        '--output', output_file.name,
+                        '--environment', 'IDR'
+                    ])
+                    
+                    assert result.exit_code == 0
+                    call_args = mock_archive.crossmatch_sources.call_args
+                    assert call_args[1]['idr_field'] == 'WIDE'
+                    output_path = Path(call_args[1]['output_file'])
+                    assert output_path.name.startswith('wide_')
+                    assert f"Results saved to: {output_path}" in result.output
+                    
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_crossmatch_idr_deep_selection(self):
+        """IDR deep queries should use deep catalogue and prefix."""
+        input_file = self.create_temp_input_file()
+        
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
+                    
+                    result = self.runner.invoke(crossmatch, [
+                        '--input', input_file,
+                        '--output', output_file.name,
+                        '--environment', 'IDR',
+                        '--idr-field', 'DEEP'
+                    ])
+                    
+                    assert result.exit_code == 0
+                    call_args = mock_archive.crossmatch_sources.call_args
+                    assert call_args[1]['idr_field'] == 'DEEP'
+                    output_path = Path(call_args[1]['output_file'])
+                    assert output_path.name.startswith('deep_')
+                    assert "Results saved to:" in result.output
+                    
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
     def test_crossmatch_error_handling(self):
         """Test error handling in crossmatch command."""
         input_file = self.create_temp_input_file()
