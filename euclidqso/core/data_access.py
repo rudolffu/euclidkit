@@ -436,6 +436,7 @@ class EuclidArchive:
                     logger.warning("use_object_id=True but no object_id column found; falling back to spatial match")
                 # Spatial crossmatch via distance predicate
                 radius_deg = radius / 3600.0  # Convert to degrees
+                distance_expr = f"DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination)"
                 query = f"""
                 SELECT u.*, 
                        m.object_id, 
@@ -452,10 +453,10 @@ class EuclidArchive:
                        fluxerr_i_ext_panstarrs_templfit, fluxerr_z_ext_panstarrs_templfit, fluxerr_g_ext_hsc_templfit, 
                        fluxerr_z_ext_hsc_templfit, fluxerr_u_ext_decam_templfit, fluxerr_g_ext_decam_templfit, 
                        flux_vis_psf, fluxerr_vis_psf, m.segmentation_map_id, m.segmentation_area,
-                       DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) AS separation_deg
+                       {distance_expr} AS separation_deg
                 FROM TAP_UPLOAD.{upload_name} AS u
                 JOIN {mer_table} AS m 
-                ON separation_deg < {radius_deg}
+                ON {distance_expr} < {radius_deg}
                 ORDER BY u.{ra_col}, separation_deg
                 """
             
