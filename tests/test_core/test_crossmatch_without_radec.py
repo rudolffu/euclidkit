@@ -61,8 +61,8 @@ def test_crossmatch_sources_idr_field_selection(monkeypatch):
     assert second_call_args[4] == 'catalogue.mer_catalogue_deep'
 
 
-def test_spatial_crossmatch_distance_expression(monkeypatch):
-    """Spatial joins should use the distance expression inside the ON clause."""
+def test_spatial_crossmatch_contains_expression(monkeypatch):
+    """Spatial joins should use CONTAINS predicate and compute separations locally."""
     user_table = Table({
         'RACAT': [150.0],
         'DECCAT': [2.0],
@@ -77,13 +77,19 @@ def test_spatial_crossmatch_distance_expression(monkeypatch):
     def fake_launch_job(query, upload_resource=None, upload_table_name=None):
         captured['query'] = query
         mock_job = Mock()
-        mock_job.get_results.return_value = Table({'separation_deg': [0.0]})
+        mock_job.get_results.return_value = Table({
+            'RACAT': [150.0],
+            'DECCAT': [2.0],
+            'mer_ra': [150.0001],
+            'mer_dec': [2.0001],
+            'object_id': [123],
+        })
         return mock_job
 
     arch.euclid.launch_job.side_effect = fake_launch_job
     arch.euclid.launch_job_async.side_effect = fake_launch_job
 
-    arch.crossmatch_sources(
+    result = arch.crossmatch_sources(
         user_table=user_table,
         ra_col='RACAT',
         dec_col='DECCAT',
@@ -92,9 +98,9 @@ def test_spatial_crossmatch_distance_expression(monkeypatch):
     )
 
     query = captured['query']
-    distance_expr = "DISTANCE(u.RACAT, u.DECCAT, m.right_ascension, m.declination)"
-    assert distance_expr in query
-    assert f"ON {distance_expr} <" in query
+    assert "CONTAINS(" in query
+    assert "DISTANCE" not in query
+    assert 'separation_arcsec' in result.colnames
 
 
 def test_crossmatch_sources_full_async(tmp_path):
