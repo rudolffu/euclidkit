@@ -611,11 +611,12 @@ class EuclidArchive:
                        fluxerr_i_ext_panstarrs_templfit, fluxerr_z_ext_panstarrs_templfit, fluxerr_g_ext_hsc_templfit, 
                        fluxerr_z_ext_hsc_templfit, fluxerr_u_ext_decam_templfit, fluxerr_g_ext_decam_templfit, 
                        flux_vis_psf, fluxerr_vis_psf, m.segmentation_map_id, m.segmentation_area
-                FROM TAP_UPLOAD.{upload_name} AS u, {mer_table} AS m
-                WHERE 1 = CONTAINS(
-                    POINT('ICRS', m.right_ascension, m.declination),
-                    CIRCLE('ICRS', u.{ra_col}, u.{dec_col}, {radius_deg})
-                )
+                FROM TAP_UPLOAD.{upload_name} AS u
+                LEFT JOIN {mer_table} AS m
+                    ON 1 = CONTAINS(
+                        POINT('ICRS', m.right_ascension, m.declination),
+                        CIRCLE('ICRS', u.{ra_col}, u.{dec_col}, {radius_deg})
+                    )
                 ORDER BY u.{ra_col}
                 """
             
