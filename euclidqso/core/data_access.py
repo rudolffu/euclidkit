@@ -613,10 +613,7 @@ class EuclidArchive:
                        flux_vis_psf, fluxerr_vis_psf, m.segmentation_map_id, m.segmentation_area
                 FROM TAP_UPLOAD.{upload_name} AS u
                 LEFT JOIN {mer_table} AS m
-                    ON 1 = CONTAINS(
-                        POINT('ICRS', m.right_ascension, m.declination),
-                        CIRCLE('ICRS', u.{ra_col}, u.{dec_col}, {radius_deg})
-                    )
+                    ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg}
                 ORDER BY u.{ra_col}
                 """
             
