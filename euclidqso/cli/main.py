@@ -14,6 +14,7 @@ from euclidqso.version import __version__
 from euclidqso.config import generate_config_template
 from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
 from euclidqso.cli.cutout_cli import cutouts
+from euclidqso.cli.footprint_cli import select_footprint
 
 
 @click.group()
@@ -118,6 +119,7 @@ main.add_command(query_spectra, name='query-spectra')
 main.add_command(compile_spectra, name='compile-spectra')
 main.add_command(upload_table)
 main.add_command(cutouts)
+main.add_command(select_footprint)
 
 
 if __name__ == '__main__':

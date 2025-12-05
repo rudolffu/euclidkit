@@ -36,6 +36,7 @@ install_requires = [
     "scipy>=1.6.0",
     "matplotlib>=3.3.0",
     "astropy>=4.0.0",
+    "mocpy>=0.13.0",
     "astroquery>=0.4.0",
     "pandas>=1.2.0",
     "photutils>=1.0.0",
@@ -95,6 +96,7 @@ package_data = {
         "data/templates/*",
         "data/filters/*",
         "data/config/*",
+        "data/mocs/*",
     ],
 }
 
