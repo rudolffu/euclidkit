@@ -8,10 +8,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from euclidqso.core.data_access import EuclidArchive
-from euclidqso.core.spectra import SpectrumCompiler
-from euclidqso.utils.io import load_table
-
 
 @click.command()
 @click.option('--input', '-i', required=True, type=click.Path(exists=True),
@@ -49,9 +45,13 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
     MER catalogue using position-based matching within a specified radius.
     """
     import logging
+    from euclidqso.core.data_access import EuclidArchive
+
     if verbose:
         logging.basicConfig(level=logging.INFO)
     
+    archive = None
+
     try:
         # Initialize archive client
         archive = EuclidArchive(environment=environment)
@@ -125,13 +125,14 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
                 click.echo(f"  Max: {separations.max():.3f}")
                 click.echo(f"  Mean: {separations.mean():.3f}")
                 click.echo(f"  Median: {separations[len(separations)//2]:.3f}")
-        
+    
     except Exception as e:
         click.echo(f"Error in crossmatch: {e}", err=True)
         sys.exit(1)
     
     finally:
-        archive.logout()
+        if archive is not None:
+            archive.logout()
 
 
 @click.command()
@@ -162,6 +163,11 @@ def query_spectra(crossmatch: Optional[str], output: str,
     Spectra_visualization_catglobe.ipynb notebook.
     """
     import logging
+    from euclidqso.core.data_access import EuclidArchive
+    from euclidqso.utils.io import load_table
+
+    archive = None
+
     if verbose:
         logging.basicConfig(level=logging.INFO)
     
@@ -237,7 +243,8 @@ def query_spectra(crossmatch: Optional[str], output: str,
         sys.exit(1)
     
     finally:
-        archive.logout()
+        if archive is not None:
+            archive.logout()
 
 
 @click.command(name='upload-table')
@@ -262,6 +269,10 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
     Upload a local table to the Euclid TAP user workspace.
     """
     import logging
+    from euclidqso.core.data_access import EuclidArchive
+
+    archive = None
+
     if verbose:
         logging.basicConfig(level=logging.INFO)
     
@@ -295,7 +306,8 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
         click.echo(f"Error uploading table: {e}", err=True)
         sys.exit(1)
     finally:
-        archive.logout()
+        if archive is not None:
+            archive.logout()
 
 
 @click.command()
@@ -320,6 +332,9 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
     from your notebook example.
     """
     import logging
+    from euclidqso.core.spectra import SpectrumCompiler
+    from euclidqso.utils.io import load_table
+
     if verbose:
         logging.basicConfig(level=logging.INFO)
     

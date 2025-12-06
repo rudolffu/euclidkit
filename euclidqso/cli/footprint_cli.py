@@ -7,8 +7,6 @@ from typing import Optional
 
 import click
 
-from euclidqso.core.footprint import filter_catalog_by_moc
-
 
 @click.command(name="select-footprint")
 @click.option(
@@ -73,6 +71,7 @@ def select_footprint(
     Extract catalog entries that fall within the Euclid MOC footprint.
     """
     import logging
+    from euclidqso.core.footprint import filter_catalog_by_moc
 
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING)
 

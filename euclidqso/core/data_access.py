@@ -17,7 +17,6 @@ import pandas as pd
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from astropy import units as u
-from astroquery.esa.euclid.core import EuclidClass
 
 from euclidqso.config import config
 from euclidqso.utils.io import load_table, save_table
@@ -75,10 +74,17 @@ class EuclidArchive:
             Archive environment: 'PDR', 'OTF', 'REG', or 'IDR'
         """
         self.environment = environment
-        self.euclid = EuclidClass(environment=environment)
+        self.euclid = None
         self._logged_in = False
         
         logger.info(f"Initialized EuclidArchive for {environment} environment")
+
+    def _ensure_client(self):
+        """Lazily create the Euclid client to avoid network calls at import time."""
+        if self.euclid is None:
+            from astroquery.esa.euclid.core import EuclidClass
+            self.euclid = EuclidClass(environment=self.environment)
+        return self.euclid
     
     def login(
         self,
@@ -107,13 +113,15 @@ class EuclidArchive:
         store_in_keyring : bool, default False
             If prompting, store password in keyring for future use
         """
+        euclid = self._ensure_client()
+
         if credentials_file is None:
             credentials_file = os.environ.get('EUCLIDQSO_CREDENTIALS_FILE') or config.get('data.credentials_file')
         
         try:
             # 1) Credentials file (on-disk). Use only if explicitly provided or configured.
             if credentials_file and Path(credentials_file).exists():
-                self.euclid.login(credentials_file=credentials_file)
+                euclid.login(credentials_file=credentials_file)
                 logger.info("Successfully logged in with credentials file")
             else:
                 # 2) Environment variables
@@ -122,7 +130,7 @@ class EuclidArchive:
                 use_user = user or env_user
 
                 if use_user and (password or env_pass):
-                    self.euclid.login(user=use_user, password=password or env_pass)
+                    euclid.login(user=use_user, password=password or env_pass)
                     logger.info(f"Successfully logged in as {use_user} via environment/user credentials")
                 else:
                     # 3) OS keyring
@@ -132,7 +140,7 @@ class EuclidArchive:
                         except Exception:
                             kr_pass = None
                         if kr_pass:
-                            self.euclid.login(user=use_user, password=kr_pass)
+                            euclid.login(user=use_user, password=kr_pass)
                             logger.info(f"Successfully logged in as {use_user} via keyring")
                             self._logged_in = True
                             return
@@ -140,7 +148,7 @@ class EuclidArchive:
                     if prompt and use_user and getpass is not None:
                         pw = getpass(f"Password for {use_user}: ")
                         if pw:
-                            self.euclid.login(user=use_user, password=pw)
+                            euclid.login(user=use_user, password=pw)
                             logger.info(f"Successfully logged in as {use_user} via prompt")
                             if store_in_keyring and keyring is not None:
                                 try:
@@ -153,7 +161,7 @@ class EuclidArchive:
                     else:
                         # 5) Fall back to interactive flow provided by astroquery (may open browser or prompt)
                         if use_user:
-                            self.euclid.login(user=use_user)
+                            euclid.login(user=use_user)
                             logger.info(f"Successfully logged in as {use_user}")
                         else:
                             logger.warning("No credentials provided - set EUCLID_USER/EUCLID_PASSWORD or use keyring/prompt")
@@ -168,6 +176,8 @@ class EuclidArchive:
     def logout(self):
         """Logout from Euclid archive."""
         if self._logged_in:
+            if self.euclid is None:
+                return
             self.euclid.logout()
             self._logged_in = False
             logger.info("Logged out from Euclid archive")
@@ -221,6 +231,7 @@ class EuclidArchive:
             Crossmatched results table, or async job metadata dictionary when
             ``full_async`` is True.
         """
+        self._ensure_client()
         if not self._logged_in:
             logger.warning("Not logged in - attempting login with default credentials")
             self.login()
@@ -389,6 +400,7 @@ class EuclidArchive:
         dict
             Metadata describing the upload request, including any job ID.
         """
+        self._ensure_client()
         if not table_name:
             raise ValueError("table_name is required for uploads")
         table_name = table_name.strip()
@@ -495,6 +507,8 @@ class EuclidArchive:
     ) -> Union[Table, Dict[str, Any]]:
         """Crossmatch a batch of sources."""
         
+        self._ensure_client()
+
         # Upload user table to archive for crossmatching
         with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
             batch.write(tmp_file.name, format='votable', overwrite=True)

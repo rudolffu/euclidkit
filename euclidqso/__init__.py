@@ -7,40 +7,29 @@ and integration with external surveys like DESI.
 """
 
 from euclidqso.version import __version__
+import importlib
 
-# Core functionality
-from euclidqso.core import data_access, spectra
+__all__ = ["__version__", "data_access", "spectra", "io"]
 
-# Analysis modules (will be available as modules are implemented)
-# from euclidqso.analysis import (
-#     photometry, spectroscopy, redshift, templates, composite, qso_fitting
-# )
-
-# Visualization (will be available as modules are implemented)
-# from euclidqso.visualization import plots, specplots, photplots
-
-# External integrations (will be available as modules are implemented)
-# from euclidqso.external import desi, wise, gaia, des
-
-# Utilities
-from euclidqso.utils import io
-
-# Configuration
-# from euclidqso import config
-
-__all__ = [
-    "__version__",
-    # Core
-    "data_access", "spectra",
-    # Utils
-    "io",
-]
+_lazy_modules = {
+    "data_access": "euclidqso.core.data_access",
+    "spectra": "euclidqso.core.spectra",
+    "io": "euclidqso.utils.io",
+}
 
 # Package metadata
 __author__ = "Yuming Fu"
 __email__ = "fuympku@outlook.com" 
 __license__ = "GPLv3"
 __url__ = "https://github.com/rudolffu/euclidqso"
+
+# Lazy module loading to avoid heavy network-bound imports at CLI startup.
+def __getattr__(name):
+    if name in _lazy_modules:
+        module = importlib.import_module(_lazy_modules[name])
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module 'euclidqso' has no attribute '{name}'")
 
 # Set up logging
 import logging

@@ -9,10 +9,6 @@ from pathlib import Path
 from typing import Optional, List
 import json
 
-import astropy.units as u
-
-from euclidqso.core.cutouts import CutoutGenerator
-
 
 @click.command()
 @click.option(
@@ -115,6 +111,9 @@ def cutouts(
     
     # Set up logging
     import logging
+    import astropy.units as u
+    from euclidqso.core.cutouts import CutoutGenerator
+
     if verbose:
         logging.basicConfig(level=logging.INFO)
     else:
