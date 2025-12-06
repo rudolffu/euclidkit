@@ -111,7 +111,8 @@ def filter_catalog_by_moc(
         unit=(u.deg, u.deg),
         frame="icrs",
     )
-    mask = moc.contains(coords)
+    # mocpy expects lon/lat inputs, not a SkyCoord instance
+    mask = moc.contains(coords.ra, coords.dec)
     filtered = catalog[mask]
 
     logger.info(
