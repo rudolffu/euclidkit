@@ -26,10 +26,10 @@ import click
 @click.option(
     "--survey",
     "-s",
-    type=click.Choice(["WIDE", "DEEP"], case_sensitive=False),
+    type=click.Choice(["WIDE", "DEEP", "BOTH", "CGV", "CGV_INPUT"], case_sensitive=False),
     default="WIDE",
     show_default=True,
-    help="Survey footprint to use.",
+    help="Packaged footprint key to use (or pass --moc-path).",
 )
 @click.option(
     "--data-release",

@@ -19,10 +19,35 @@ logger = logging.getLogger(__name__)
 # Map available MOCs by data release and survey
 MOC_FILES: Dict[str, Dict[str, str]] = {
     "DR1": {
-        "WIDE": "cgv_map_dr1input_o13_moc.fits",
-        # Placeholder for potential future DEEP release
+        "WIDE": "dr1_mer_wide_bins_o13_moc.fits",
+        "DEEP": "dr1_mer_deep_o13_moc.fits",
+        "BOTH": "dr1_mer_wide_deep_union_o13_moc.fits",
+        "CGV_INPUT": "cgv_map_dr1input_o13_moc.fits",
     }
 }
+
+
+# Common aliases (normalized) for MOC selection keys
+MOC_ALIASES: Dict[str, str] = {
+    "ALL": "BOTH",
+    "UNION": "BOTH",
+    "WIDE_DEEP": "BOTH",
+    "WIDE+DEEP": "BOTH",
+    "CGV": "CGV_INPUT",
+    "DR1INPUT": "CGV_INPUT",
+}
+
+
+def _normalize_key(value: str) -> str:
+    return value.strip().upper().replace("-", "_").replace(" ", "_")
+
+
+def list_available_surveys(data_release: str = "DR1") -> tuple[str, ...]:
+    """Return available packaged footprint keys for a given data release."""
+    release_key = _normalize_key(data_release)
+    if release_key not in MOC_FILES:
+        return tuple()
+    return tuple(sorted(MOC_FILES[release_key].keys()))
 
 
 def _resolve_column(table, target: str) -> str:
@@ -40,8 +65,9 @@ def get_moc_path(survey: str, data_release: str = "DR1", moc_path: Optional[str]
     if moc_path:
         return Path(moc_path)
 
-    release_key = data_release.upper()
-    survey_key = survey.upper()
+    release_key = _normalize_key(data_release)
+    survey_key = _normalize_key(survey)
+    survey_key = MOC_ALIASES.get(survey_key, survey_key)
 
     if release_key not in MOC_FILES or survey_key not in MOC_FILES[release_key]:
         available = ", ".join(
@@ -83,7 +109,7 @@ def filter_catalog_by_moc(
     output_catalog : str
         Path to write the filtered catalog.
     survey : str, default "WIDE"
-        Survey field to use ("WIDE" or "DEEP").
+        Packaged footprint key to use (e.g., "WIDE", "DEEP", "BOTH", "CGV_INPUT").
     data_release : str, default "DR1"
         Data release version. Currently only DR1 MOCs are packaged.
     ra_col : str, default "ra"
