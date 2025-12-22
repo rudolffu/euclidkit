@@ -626,7 +626,7 @@ class EuclidArchive:
                        fluxerr_z_ext_hsc_templfit, fluxerr_u_ext_decam_templfit, fluxerr_g_ext_decam_templfit, 
                        flux_vis_psf, fluxerr_vis_psf, m.segmentation_map_id, m.segmentation_area
                 FROM TAP_UPLOAD.{upload_name} AS u
-                LEFT JOIN {mer_table} AS m
+                JOIN {mer_table} AS m
                     ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg}
                 ORDER BY u.{ra_col}
                 """
