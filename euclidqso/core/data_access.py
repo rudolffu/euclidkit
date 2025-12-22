@@ -539,18 +539,18 @@ class EuclidArchive:
                 ('flux_y_templfit', 'flux_y_templfit'),
                 ('flux_h_templfit', 'flux_h_templfit'),
                 ('flux_j_templfit', 'flux_j_templfit'),
-                ('flux_u_ext_decam_templfit', 'flux_u_ext_decam_templfit'),
-                ('flux_g_ext_decam_templfit', 'flux_g_ext_decam_templfit'),
-                ('flux_r_ext_decam_templfit', 'flux_r_ext_decam_templfit'),
-                ('flux_i_ext_decam_templfit', 'flux_i_ext_decam_templfit'),
-                ('flux_z_ext_decam_templfit', 'flux_z_ext_decam_templfit'),
-                ('flux_u_ext_megacam_templfit', 'flux_u_ext_megacam_templfit'),
-                ('flux_r_ext_megacam_templfit', 'flux_r_ext_megacam_templfit'),
-                ('flux_g_ext_jpcam_templfit', 'flux_g_ext_jpcam_templfit'),
-                ('flux_i_ext_panstarrs_templfit', 'flux_i_ext_panstarrs_templfit'),
-                ('flux_z_ext_panstarrs_templfit', 'flux_z_ext_panstarrs_templfit'),
-                ('flux_g_ext_hsc_templfit', 'flux_g_ext_hsc_templfit'),
-                ('flux_z_ext_hsc_templfit', 'flux_z_ext_hsc_templfit'),
+                ('flux_u_ext_decam_templfit', 'flux_u_ext_decam_templfit'), # south; inapplicapable
+                ('flux_g_ext_decam_templfit', 'flux_g_ext_decam_templfit'), # south
+                ('flux_r_ext_decam_templfit', 'flux_r_ext_decam_templfit'), # south
+                ('flux_i_ext_decam_templfit', 'flux_i_ext_decam_templfit'), # south
+                ('flux_z_ext_decam_templfit', 'flux_z_ext_decam_templfit'), # south
+                ('flux_u_ext_megacam_templfit', 'flux_u_ext_megacam_templfit'), # north
+                ('flux_r_ext_megacam_templfit', 'flux_r_ext_megacam_templfit'), # north
+                ('flux_g_ext_jpcam_templfit', 'flux_g_ext_jpcam_templfit'), # north; JEDIS; not available yet
+                ('flux_i_ext_panstarrs_templfit', 'flux_i_ext_panstarrs_templfit'), # north
+                ('flux_z_ext_panstarrs_templfit', 'flux_z_ext_panstarrs_templfit'), # north; in DR2
+                ('flux_g_ext_hsc_templfit', 'flux_g_ext_hsc_templfit'), # north
+                ('flux_z_ext_hsc_templfit', 'flux_z_ext_hsc_templfit'), # north
                 ('fluxerr_y_templfit', 'fluxerr_y_templfit'),
                 ('fluxerr_j_templfit', 'fluxerr_j_templfit'),
                 ('fluxerr_h_templfit', 'fluxerr_h_templfit'),
@@ -615,15 +615,15 @@ class EuclidArchive:
                        m.right_ascension AS mer_ra, 
                        m.declination AS mer_dec,
                        mu_max, mumax_minus_mag, kron_radius, kron_radius_err, gaia_id, gaia_match_quality, 
-                       flux_y_templfit, flux_h_templfit, flux_j_templfit, flux_u_ext_decam_templfit, flux_g_ext_decam_templfit, 
+                       flux_y_templfit, flux_h_templfit, flux_j_templfit, flux_g_ext_decam_templfit, 
                        flux_r_ext_decam_templfit, flux_i_ext_decam_templfit, flux_z_ext_decam_templfit, 
-                       flux_u_ext_megacam_templfit, flux_r_ext_megacam_templfit, flux_g_ext_jpcam_templfit, 
-                       flux_i_ext_panstarrs_templfit, flux_z_ext_panstarrs_templfit, flux_g_ext_hsc_templfit, 
+                       flux_u_ext_megacam_templfit, flux_r_ext_megacam_templfit, 
+                       flux_i_ext_panstarrs_templfit, flux_g_ext_hsc_templfit, 
                        flux_z_ext_hsc_templfit, fluxerr_y_templfit, fluxerr_j_templfit, fluxerr_h_templfit, 
                        fluxerr_r_ext_decam_templfit, fluxerr_i_ext_decam_templfit, fluxerr_z_ext_decam_templfit, 
-                       fluxerr_u_ext_megacam_templfit, fluxerr_r_ext_megacam_templfit, fluxerr_g_ext_jpcam_templfit, 
-                       fluxerr_i_ext_panstarrs_templfit, fluxerr_z_ext_panstarrs_templfit, fluxerr_g_ext_hsc_templfit, 
-                       fluxerr_z_ext_hsc_templfit, fluxerr_u_ext_decam_templfit, fluxerr_g_ext_decam_templfit, 
+                       fluxerr_u_ext_megacam_templfit, fluxerr_r_ext_megacam_templfit, 
+                       fluxerr_i_ext_panstarrs_templfit, fluxerr_g_ext_hsc_templfit, 
+                       fluxerr_z_ext_hsc_templfit, fluxerr_g_ext_decam_templfit, 
                        flux_vis_psf, fluxerr_vis_psf, m.segmentation_map_id, m.segmentation_area
                 FROM TAP_UPLOAD.{upload_name} AS u
                 JOIN {mer_table} AS m
