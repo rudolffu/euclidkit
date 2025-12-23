@@ -615,16 +615,20 @@ class EuclidArchive:
                        m.right_ascension AS mer_ra, 
                        m.declination AS mer_dec,
                        mu_max, mumax_minus_mag, kron_radius, kron_radius_err, gaia_id, gaia_match_quality, 
-                       flux_y_templfit, flux_h_templfit, flux_j_templfit, flux_g_ext_decam_templfit, 
-                       flux_r_ext_decam_templfit, flux_i_ext_decam_templfit, flux_z_ext_decam_templfit, 
-                       flux_u_ext_megacam_templfit, flux_r_ext_megacam_templfit, 
-                       flux_i_ext_panstarrs_templfit, flux_g_ext_hsc_templfit, 
-                       flux_z_ext_hsc_templfit, fluxerr_y_templfit, fluxerr_j_templfit, fluxerr_h_templfit, 
-                       fluxerr_r_ext_decam_templfit, fluxerr_i_ext_decam_templfit, fluxerr_z_ext_decam_templfit, 
-                       fluxerr_u_ext_megacam_templfit, fluxerr_r_ext_megacam_templfit, 
-                       fluxerr_i_ext_panstarrs_templfit, fluxerr_g_ext_hsc_templfit, 
-                       fluxerr_z_ext_hsc_templfit, fluxerr_g_ext_decam_templfit, 
-                       flux_vis_psf, fluxerr_vis_psf, m.segmentation_map_id, m.segmentation_area
+                       flux_vis_psf, fluxerr_vis_psf,
+                       flux_y_templfit, fluxerr_y_templfit,
+                       flux_j_templfit, fluxerr_j_templfit,
+                       flux_h_templfit, fluxerr_h_templfit, 
+                       flux_g_ext_decam_templfit, fluxerr_g_ext_decam_templfit, 
+                       flux_r_ext_decam_templfit, fluxerr_r_ext_decam_templfit,
+                       flux_i_ext_decam_templfit, fluxerr_i_ext_decam_templfit,
+                       flux_z_ext_decam_templfit, fluxerr_z_ext_decam_templfit,
+                       flux_u_ext_megacam_templfit, fluxerr_u_ext_megacam_templfit,
+                       flux_r_ext_megacam_templfit, fluxerr_r_ext_megacam_templfit,
+                       flux_i_ext_panstarrs_templfit, fluxerr_i_ext_panstarrs_templfit,
+                       flux_g_ext_hsc_templfit, fluxerr_g_ext_hsc_templfit,
+                       flux_z_ext_hsc_templfit, fluxerr_z_ext_hsc_templfit,
+                       m.segmentation_map_id, m.segmentation_area
                 FROM TAP_UPLOAD.{upload_name} AS u
                 JOIN {mer_table} AS m
                     ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg}
