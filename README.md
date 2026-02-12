@@ -1,10 +1,10 @@
-# euclidqso
+# euclidkit
 
 A comprehensive Python package for Euclid QSO spectroscopic and photometric analysis, designed for use within the ESA Datalabs environment.
 
 ## Overview
 
-`euclidqso` facilitates advanced data exploration and visualization for Euclid Q1/(I)DR1 data release, including:
+`euclidkit` facilitates advanced data exploration and visualization for Euclid Q1/(I)DR1 data release, including:
 
 - **Data Access**: Query and crossmatch sources with the Euclid MER catalogue
 - **Spectroscopic Analysis**: Access, download, and combine NISP spectra of QSO candidates  
@@ -25,14 +25,14 @@ The package integrates with other specialized tools (`specbox` and `qsofitmore`)
 ### Basic Installation
 
 ```bash
-pip install euclidqso
+pip install euclidkit
 ```
 
 ### Development Installation
 
 ```bash
-git clone https://github.com/rudolffu/euclidqso.git
-cd euclidqso
+git clone https://github.com/rudolffu/euclidkit.git
+cd euclidkit
 pip install -e .
 ```
 
@@ -40,7 +40,7 @@ pip install -e .
 
 For DESI integration:
 ```bash
-pip install euclidqso[desi]
+pip install euclidkit[desi]
 ```
 
 ## Quick Start
@@ -58,12 +58,13 @@ echo "your_password" >> /media/user/cred.txt
 
 Generate a configuration file:
 ```bash
-euclidqso init-config --output my_config.yaml --template basic
+euclidkit init-config --output my_config.yaml --template basic
 ```
 
 ### Basic Usage
 
 ```python
+# Note: the Python import path is currently still `euclidqso`.
 from euclidqso.core.data_access import EuclidArchive
 
 # Initialize archive connection
@@ -96,7 +97,7 @@ combined_file = archive.combine_spectra_to_fits(
 
 ```bash
 # Crossmatch user table with Euclid MER catalogue
-euclidqso crossmatch \
+euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
     --radius 1.0 \
@@ -104,14 +105,14 @@ euclidqso crossmatch \
 
 # Submit the entire table as a single async job (no batching). The output file
 # will contain TAP job metadata instead of immediate crossmatch results.
-euclidqso crossmatch \
+euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
     --full-async
 
 # When using the IDR environment the command defaults to the WIDE field and
 # writes results to wide_<filename>. Use --idr-field DEEP to query the deep stack:
-euclidqso crossmatch \
+euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
     --environment IDR \
@@ -122,14 +123,14 @@ euclidqso crossmatch \
 
 ```bash
 # Upload a FITS table to your Euclid TAP workspace
-euclidqso upload-table \
+euclidkit upload-table \
     --input my_sources.fits \
     --table-name my_workspace_table \
     --description "Sources awaiting deep crossmatch" \
     --overwrite
 
 # Upload CSV data as-is (format inferred automatically)
-euclidqso upload-table \
+euclidkit upload-table \
     --input trimmed_sources.csv \
     --table-name trimmed_sources
 ```
@@ -138,13 +139,13 @@ euclidqso upload-table \
 
 ```bash
 # Query spectra from crossmatch results
-euclidqso query-spectra \
+euclidkit query-spectra \
     --crossmatch crossmatch_results.fits \
     --output spectra_sources.fits \
     --verbose
 
 # Query spectra by object IDs and auto-combine
-euclidqso query-spectra \
+euclidkit query-spectra \
     --object-ids 123456,789012,345678 \
     --output spectra_sources.fits \
     --combine-output my_spectra.fits \
@@ -156,7 +157,7 @@ euclidqso query-spectra \
 
 ```bash
 # Compile individual spectra into chunked FITS files
-euclidqso compile-spectra \
+euclidkit compile-spectra \
     --spectra-table spectra_sources.fits \
     --output-dir ./output \
     --prefix compiled_spectra \
@@ -330,10 +331,10 @@ Check your installation and environment:
 
 ```bash
 # Check all components
-euclidqso diagnostics
+euclidkit diagnostics
 
 # Check specific components
-euclidqso diagnostics --check-deps --check-data --check-desi
+euclidkit diagnostics --check-deps --check-data --check-desi
 ```
 
 ## Integration with Other Tools
@@ -382,21 +383,21 @@ template = generator.create_composite_template(
 ## Documentation
 
 For detailed documentation and examples, visit:
-- [Package Documentation](https://github.com/rudolffu/euclidqso/docs)
+- [Package Documentation](https://github.com/rudolffu/euclidkit/docs)
 - [Euclid Science Archive](https://s2e2.cosmos.esa.int/www/euclid_iscience/Public_User_Guide.html)
 - [astroquery.esa.euclid](https://astroquery.readthedocs.io/en/latest/esa/euclid/euclid.html)
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/rudolffu/euclidqso/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/rudolffu/euclidqso/discussions)
+- **Issues**: [GitHub Issues](https://github.com/rudolffu/euclidkit/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/rudolffu/euclidkit/discussions)
 - **Email**: fuympku@outlook.com
 
 ## Author
 
 **Yuming Fu** ([@rudolffu](https://github.com/rudolffu))
 - Email: fuympku@outlook.com
-- GitHub: https://github.com/rudolffu/euclidqso
+- GitHub: https://github.com/rudolffu/euclidkit
 
 ## License
 

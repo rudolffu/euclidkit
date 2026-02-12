@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "euclidqso"
+name = "euclidkit"
 dynamic = ["version"]
 description = "Euclid QSO Analysis Package"
 readme = "README.md"
@@ -67,21 +67,22 @@ dev = [
     "ipython>=7.20.0",
 ]
 complete = [
-    "euclidqso[desi,visualization,dev]",
+    "euclidkit[desi,visualization,dev]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/rudolffu/euclidqso"
-Documentation = "https://euclidqso.readthedocs.io"
-Repository = "https://github.com/rudolffu/euclidqso"
-"Bug Tracker" = "https://github.com/rudolffu/euclidqso/issues"
+Homepage = "https://github.com/rudolffu/euclidkit"
+Documentation = "https://euclidkit.readthedocs.io"
+Repository = "https://github.com/rudolffu/euclidkit"
+"Bug Tracker" = "https://github.com/rudolffu/euclidkit/issues"
 
 [project.scripts]
+euclidkit = "euclidqso.cli.main:main"
+euclidkit-cutouts = "euclidqso.cli.cutout_cli:cutouts"
+euclidkit-spectra = "euclidqso.cli.spec_cli:main"
+euclidkit-composite = "euclidqso.cli.composite_cli:main"
+euclidkit-pipeline = "euclidqso.cli.main:pipeline"
 euclidqso = "euclidqso.cli.main:main"
-euclidqso-cutouts = "euclidqso.cli.cutout_cli:main"
-euclidqso-spectra = "euclidqso.cli.spec_cli:main"
-euclidqso-composite = "euclidqso.cli.composite_cli:main"
-euclidqso-pipeline = "euclidqso.cli.main:pipeline"
 
 [tool.setuptools]
 include-package-data = true

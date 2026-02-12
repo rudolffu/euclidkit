@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for euclidqso package.
+Setup script for euclidkit.
 This is a fallback for older pip versions that don't support pyproject.toml.
 """
 
@@ -10,7 +10,7 @@ import sys
 
 # Ensure Python 3.9+
 if sys.version_info < (3, 9):
-    raise RuntimeError("euclidqso requires Python 3.9 or later")
+    raise RuntimeError("euclidkit requires Python 3.9 or later")
 
 # Read version from euclidqso/version.py
 version_file = os.path.join(os.path.dirname(__file__), "euclidqso", "version.py")
@@ -82,11 +82,12 @@ extras_require["complete"] = [
 # Entry points for command line scripts
 entry_points = {
     "console_scripts": [
+        "euclidkit=euclidqso.cli.main:main",
+        "euclidkit-cutouts=euclidqso.cli.cutout_cli:cutouts",
+        "euclidkit-spectra=euclidqso.cli.spec_cli:main", 
+        "euclidkit-composite=euclidqso.cli.composite_cli:main",
+        "euclidkit-pipeline=euclidqso.cli.main:pipeline",
         "euclidqso=euclidqso.cli.main:main",
-        "euclidqso-cutouts=euclidqso.cli.cutout_cli:cutouts",
-        "euclidqso-spectra=euclidqso.cli.spec_cli:main", 
-        "euclidqso-composite=euclidqso.cli.composite_cli:main",
-        "euclidqso-pipeline=euclidqso.cli.main:pipeline",
     ],
 }
 
@@ -102,7 +103,7 @@ package_data = {
 
 if __name__ == "__main__":
     setup(
-        name="euclidqso",
+        name="euclidkit",
         version=version,
         description="Euclid QSO Analysis Package",
         long_description=long_description,
@@ -111,11 +112,11 @@ if __name__ == "__main__":
         author_email="fuympku@outlook.com",
         maintainer="Yuming Fu", 
         maintainer_email="fuympku@outlook.com",
-        url="https://github.com/rudolffu/euclidqso",
+        url="https://github.com/rudolffu/euclidkit",
         project_urls={
-            "Documentation": "https://euclidqso.readthedocs.io",
-            "Source": "https://github.com/rudolffu/euclidqso",
-            "Tracker": "https://github.com/rudolffu/euclidqso/issues",
+            "Documentation": "https://euclidkit.readthedocs.io",
+            "Source": "https://github.com/rudolffu/euclidkit",
+            "Tracker": "https://github.com/rudolffu/euclidkit/issues",
         },
         packages=find_packages(),
         include_package_data=True,

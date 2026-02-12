@@ -94,19 +94,19 @@ def cutouts(
     
     \b
     # Single source by object ID
-    euclidqso-cutouts --object-id 123456789 --output /tmp/cutouts/
+    euclidkit-cutouts --object-id 123456789 --output /tmp/cutouts/
     
     \b  
     # Single source by coordinates
-    euclidqso-cutouts --ra 150.0 --dec 2.5 --output /tmp/cutouts/
+    euclidkit-cutouts --ra 150.0 --dec 2.5 --output /tmp/cutouts/
     
     \b
     # Multiple sources from file
-    euclidqso-cutouts --sources-file sources.csv --output /tmp/cutouts/
+    euclidkit-cutouts --sources-file sources.csv --output /tmp/cutouts/
     
     \b
     # Custom size and instrument
-    euclidqso-cutouts --source "150.0,2.5" --output /tmp/cutouts/ --size 20 --instrument NISP
+    euclidkit-cutouts --source "150.0,2.5" --output /tmp/cutouts/ --size 20 --instrument NISP
     """
     
     # Set up logging

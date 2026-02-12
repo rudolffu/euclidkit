@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main command line interface for euclidqso package.
+Main command line interface for euclidkit.
 """
 
 import click
@@ -24,7 +24,7 @@ from euclidqso.cli.footprint_cli import select_footprint
 @click.pass_context
 def main(ctx, verbose: bool, config: Optional[str]):
     """
-    euclidqso: Euclid QSO Analysis Package
+    euclidkit: Euclid QSO Analysis Package
     
     A comprehensive toolkit for analyzing QSO candidates from Euclid data,
     including spectroscopic and photometric analysis, template generation,
@@ -36,11 +36,11 @@ def main(ctx, verbose: bool, config: Optional[str]):
     ctx.obj['config'] = config
     
     if verbose:
-        click.echo(f"euclidqso v{__version__} CLI initialized with config: {config}")
+        click.echo(f"euclidkit v{__version__} CLI initialized with config: {config}")
 
 
 @main.command()
-@click.option('--output', '-o', type=click.Path(), default='euclidqso_config.yaml',
+@click.option('--output', '-o', type=click.Path(), default='euclidkit_config.yaml',
               help='Output configuration file')
 @click.option('--template', '-t', type=click.Choice(['basic', 'advanced', 'pipeline']),
               default='basic', help='Configuration template')
@@ -61,7 +61,7 @@ def init_config(output: str, template: str):
 @click.option('--check-data', is_flag=True, help='Check data access')
 @click.option('--check-desi', is_flag=True, help='Check DESI integration')
 def diagnostics(check_deps: bool, check_data: bool, check_desi: bool):
-    """Run diagnostic checks for euclidqso installation."""
+    """Run diagnostic checks for euclidkit installation."""
     if not any([check_deps, check_data, check_desi]):
         check_deps = check_data = check_desi = True
     
@@ -98,7 +98,7 @@ def diagnostics(check_deps: bool, check_data: bool, check_desi: bool):
             import sparcl.client
             results['desi'] = {'passed': True, 'message': 'DESI/SPARCL integration available'}
         except ImportError:
-            results['desi'] = {'passed': False, 'message': 'DESI dependencies not installed (install with pip install euclidqso[desi])'}
+            results['desi'] = {'passed': False, 'message': 'DESI dependencies not installed (install with pip install euclidkit[desi])'}
     
     # Print results
     for check, result in results.items():
