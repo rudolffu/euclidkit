@@ -1,14 +1,14 @@
 # euclidkit
 
-A comprehensive Python package for Euclid QSO spectroscopic and photometric analysis, designed for use within the ESA Datalabs environment.
+A comprehensive Python package for Euclid archival data analysis, designed for use within the ESA Datalabs environment.
 
 ## Overview
 
-`euclidkit` facilitates advanced data exploration and visualization for Euclid Q1/(I)DR1 data release, including:
+`euclidkit` facilitates advanced data exploration and visualization for Euclid Q1/(I)DR1 archival releases, including:
 
 - **Data Access**: Query and crossmatch sources with the Euclid MER catalogue
-- **Spectroscopic Analysis**: Access, download, and combine NISP spectra of QSO candidates  
-- **Template Generation**: Run redshift determination code and generate composite spectra
+- **Spectroscopic Analysis**: Access, download, and combine NISP spectra of archival sources
+- **Template Generation**: Run redshift determination workflows and generate composite spectra
 - **Multi-Survey Integration**: Interface with DESI, SDSS, and other survey data
 - **Unified Workflow**: Streamlined tools for researchers working with Euclid spectroscopic data
 

@@ -1,8 +1,8 @@
 """
-euclidkit: Euclid QSO Analysis Package
+euclidkit: Euclid Archival Data Analysis Package
 
-A comprehensive toolkit for analyzing QSO candidates from Euclid data,
-including spectroscopic and photometric analysis, template generation,
+A comprehensive toolkit for analyzing Euclid archival sources,
+including catalog crossmatching, spectroscopic and photometric workflows,
 and integration with external surveys like DESI.
 """
 

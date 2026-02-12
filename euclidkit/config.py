@@ -15,7 +15,8 @@ class EuclidKitConfig:
     
     def __init__(self):
         self.config_dir = Path.home() / '.euclidkit'
-        self.config_file = self.config_dir / 'config.yaml'
+        self.config_file = self.config_dir / 'euclidkit_config.yaml'
+        self.legacy_config_file = self.config_dir / 'config.yaml'
         self._config = self._load_default_config()
         self._load_user_config()
         self._load_env_overrides()
@@ -87,12 +88,18 @@ class EuclidKitConfig:
         }
     
     def _load_user_config(self):
-        """Load user configuration file if it exists."""
-        if self.config_file.exists():
+        """Load user configuration file if it exists.
+
+        Preferred path is ~/.euclidkit/euclidkit_config.yaml.
+        Legacy fallback path (~/.euclidkit/config.yaml) is supported for compatibility.
+        """
+        selected_config = self.config_file if self.config_file.exists() else self.legacy_config_file
+        if selected_config.exists():
             try:
-                with open(self.config_file, 'r') as f:
+                with open(selected_config, 'r') as f:
                     user_config = yaml.safe_load(f)
-                    self._merge_config(self._config, user_config)
+                    if user_config:
+                        self._merge_config(self._config, user_config)
             except Exception as e:
                 print(f"Warning: Could not load user config: {e}")
     

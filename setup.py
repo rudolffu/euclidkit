@@ -28,7 +28,7 @@ if os.path.exists(readme_file):
     with open(readme_file, "r", encoding="utf-8") as f:
         long_description = f.read()
 else:
-    long_description = "Euclid QSO Analysis Package"
+    long_description = "Euclid Archival Data Analysis Package"
 
 # Core dependencies
 install_requires = [
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     setup(
         name="euclidkit",
         version=version,
-        description="Euclid QSO Analysis Package",
+        description="Euclid Archival Data Analysis Package",
         long_description=long_description,
         long_description_content_type="text/markdown",
         author="Yuming Fu",
@@ -135,6 +135,6 @@ if __name__ == "__main__":
             "Programming Language :: Python :: 3.11",
             "Operating System :: OS Independent",
         ],
-        keywords="astronomy euclid qso spectroscopy photometry",
+        keywords="astronomy euclid archival-data catalog-analysis spectroscopy photometry",
         zip_safe=False,
     )

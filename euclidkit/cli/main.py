@@ -24,10 +24,10 @@ from euclidkit.cli.footprint_cli import select_footprint
 @click.pass_context
 def main(ctx, verbose: bool, config: Optional[str]):
     """
-    euclidkit: Euclid QSO Analysis Package
+    euclidkit: Euclid Archival Data Analysis Package
     
-    A comprehensive toolkit for analyzing QSO candidates from Euclid data,
-    including spectroscopic and photometric analysis, template generation,
+    A comprehensive toolkit for analyzing Euclid archival sources,
+    including catalog crossmatching, spectroscopic and photometric workflows,
     and integration with external surveys like DESI.
     """
     # Ensure that ctx.obj exists and is a dict
@@ -40,7 +40,7 @@ def main(ctx, verbose: bool, config: Optional[str]):
 
 
 @main.command()
-@click.option('--output', '-o', type=click.Path(), default='euclidkit_config.yaml',
+@click.option('--output', '-o', type=click.Path(), default=str(Path.home() / '.euclidkit' / 'euclidkit_config.yaml'),
               help='Output configuration file')
 @click.option('--template', '-t', type=click.Choice(['basic', 'advanced', 'pipeline']),
               default='basic', help='Configuration template')

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "euclidkit"
 dynamic = ["version"]
-description = "Euclid QSO Analysis Package"
+description = "Euclid Archival Data Analysis Package"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
@@ -14,7 +14,7 @@ authors = [
 maintainers = [
     {name = "Yuming Fu", email = "fuympku@outlook.com"}
 ]
-keywords = ["astronomy", "euclid", "qso", "spectroscopy", "photometry"]
+keywords = ["astronomy", "euclid", "archival-data", "catalog-analysis", "spectroscopy", "photometry"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
