@@ -87,7 +87,6 @@ entry_points = {
         "euclidkit-spectra=euclidkit.cli.spec_cli:main", 
         "euclidkit-composite=euclidkit.cli.composite_cli:main",
         "euclidkit-pipeline=euclidkit.cli.main:pipeline",
-        "euclidkit=euclidkit.cli.main:main",
     ],
 }
 
