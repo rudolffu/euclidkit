@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import numpy as np
 from astropy.table import Table
 
-from euclidqso.core.data_access import EuclidArchive
+from euclidkit.core.data_access import EuclidArchive
 
 
 def test_crossmatch_batch_object_id_join_query_build(monkeypatch):

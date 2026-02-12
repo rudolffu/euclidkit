@@ -1,5 +1,5 @@
 """
-Analysis modules for euclidqso package.
+Analysis modules for euclidkit package.
 
 This module provides scientific analysis routines for QSO studies.
 """

@@ -1,5 +1,5 @@
 """
-External survey integration modules for euclidqso package.
+External survey integration modules for euclidkit package.
 
 This module provides interfaces to external astronomical surveys and catalogs.
 """

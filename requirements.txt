@@ -1,4 +1,4 @@
-# Core dependencies for euclidqso
+# Core dependencies for euclidkit
 numpy>=1.19.0
 scipy>=1.6.0
 matplotlib>=3.3.0

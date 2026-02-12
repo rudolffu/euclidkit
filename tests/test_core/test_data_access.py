@@ -12,7 +12,7 @@ from astropy.table import Table
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 
-from euclidqso.core.data_access import EuclidArchive
+from euclidkit.core.data_access import EuclidArchive
 
 
 class TestEuclidArchive:
@@ -66,7 +66,7 @@ class TestEuclidArchive:
             archive = EuclidArchive(environment=env)
             assert archive.get_mer_table_name() == expected
 
-    @patch('euclidqso.core.data_access.Euclid')
+    @patch('euclidkit.core.data_access.Euclid')
     def test_login_default_credentials(self, mock_euclid_class):
         """Test login with default credentials."""
         mock_instance = Mock()
@@ -78,7 +78,7 @@ class TestEuclidArchive:
         mock_euclid_class.assert_called_once()
         mock_instance.login.assert_called_once_with('/media/user/cred.txt')
 
-    @patch('euclidqso.core.data_access.Euclid')
+    @patch('euclidkit.core.data_access.Euclid')
     def test_login_custom_credentials(self, mock_euclid_class):
         """Test login with custom credentials file."""
         mock_instance = Mock()
@@ -152,7 +152,7 @@ class TestEuclidArchive:
             mock_result = self.sample_crossmatch_result
             self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
             
-            with patch('euclidqso.core.data_access.load_table', return_value=self.sample_coordinates):
+            with patch('euclidkit.core.data_access.load_table', return_value=self.sample_coordinates):
                 result = self.archive.crossmatch_sources(
                     user_table=f.name,
                     radius=1.0

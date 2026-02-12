@@ -10,7 +10,7 @@ from pathlib import Path
 from astropy.table import Table
 from astropy.io import fits
 
-from euclidqso.utils.io import (
+from euclidkit.utils.io import (
     load_table, save_table, DataLoader, FileManager, FormatConverter
 )
 

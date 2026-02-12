@@ -3,7 +3,7 @@
 Standalone script for Euclid cutout generation.
 """
 
-from euclidqso.cli.cutout_cli import cutouts
+from euclidkit.cli.cutout_cli import cutouts
 
 if __name__ == '__main__':
     cutouts()

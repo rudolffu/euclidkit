@@ -71,7 +71,7 @@ def select_footprint(
     Extract catalog entries that fall within the Euclid MOC footprint.
     """
     import logging
-    from euclidqso.core.footprint import filter_catalog_by_moc
+    from euclidkit.core.footprint import filter_catalog_by_moc
 
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING)
 

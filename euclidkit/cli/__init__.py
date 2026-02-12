@@ -1,5 +1,5 @@
 """
-Command line interface modules for euclidqso package.
+Command line interface modules for euclidkit package.
 
 This module provides CLI tools and utilities.
 """

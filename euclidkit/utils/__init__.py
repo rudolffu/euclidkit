@@ -1,5 +1,5 @@
 """
-Utility modules for euclidqso package.
+Utility modules for euclidkit package.
 
 This module provides common utility functions and helper classes.
 """

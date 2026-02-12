@@ -1,5 +1,5 @@
 """
-Core functionality for euclidqso package.
+Core functionality for euclidkit package.
 
 This module provides the fundamental data access and processing capabilities.
 """

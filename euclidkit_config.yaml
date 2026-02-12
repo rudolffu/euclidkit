@@ -3,7 +3,7 @@ data:
     q1: /data/euclid_q1/
     ero: /data/euc_ero_data_01/
   credentials_file: /media/user/cred.txt
-  cache_dir: /Users/yuming/.euclidqso/cache
+  cache_dir: /Users/yuming/.euclidkit/cache
 analysis:
   redshift:
     method: xcorr

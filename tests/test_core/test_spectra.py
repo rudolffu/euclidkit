@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch, MagicMock
 from astropy.table import Table
 from astropy.io import fits
 
-from euclidqso.core.spectra import SpectrumLoader, SpectrumProcessor, SpectrumCompiler
+from euclidkit.core.spectra import SpectrumLoader, SpectrumProcessor, SpectrumCompiler
 
 
 class TestSpectrumLoader:
@@ -31,7 +31,7 @@ class TestSpectrumLoader:
         assert loader.cache_dir == Path('/tmp/cache')
         assert loader.use_cache is False
 
-    @patch('euclidqso.core.spectra.fits.open')
+    @patch('euclidkit.core.spectra.fits.open')
     def test_load_spectrum_from_fits(self, mock_fits_open):
         """Test loading spectrum from FITS file."""
         # Mock FITS file structure
@@ -157,7 +157,7 @@ class TestSpectrumCompiler:
         assert len(chunks) == 3
         assert chunks == [(0, 10), (10, 20), (20, 25)]
 
-    @patch('euclidqso.core.spectra.SpectrumLoader.load_spectrum')
+    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
     @patch('astropy.io.fits.HDUList.writeto')
     def test_compile_spectra_single_file(self, mock_writeto, mock_load_spectrum):
         """Test compiling spectra into a single file."""
@@ -180,7 +180,7 @@ class TestSpectrumCompiler:
             assert 'test_compiled_001.fits' in output_files[0]
             mock_writeto.assert_called_once()
 
-    @patch('euclidqso.core.spectra.SpectrumLoader.load_spectrum')
+    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
     @patch('astropy.io.fits.HDUList.writeto')
     def test_compile_spectra_multiple_files(self, mock_writeto, mock_load_spectrum):
         """Test compiling spectra into multiple files."""
@@ -211,7 +211,7 @@ class TestSpectrumCompiler:
             assert len(output_files) == 3
             assert mock_writeto.call_count == 3
 
-    @patch('euclidqso.core.spectra.SpectrumLoader.load_spectrum')
+    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
     def test_compile_spectra_with_overwrite(self, mock_load_spectrum):
         """Test compiling with overwrite option."""
         mock_spectrum = Table({
@@ -238,7 +238,7 @@ class TestSpectrumCompiler:
                 mock_writeto.assert_called_once()
                 assert mock_writeto.call_args[1]['overwrite'] is True
 
-    @patch('euclidqso.core.spectra.SpectrumLoader.load_spectrum')
+    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
     def test_compile_spectra_skip_failed_loads(self, mock_load_spectrum):
         """Test that failed spectrum loads are skipped."""
         # Mock some successful and some failed loads

@@ -77,24 +77,24 @@ Repository = "https://github.com/rudolffu/euclidkit"
 "Bug Tracker" = "https://github.com/rudolffu/euclidkit/issues"
 
 [project.scripts]
-euclidkit = "euclidqso.cli.main:main"
-euclidkit-cutouts = "euclidqso.cli.cutout_cli:cutouts"
-euclidkit-spectra = "euclidqso.cli.spec_cli:main"
-euclidkit-composite = "euclidqso.cli.composite_cli:main"
-euclidkit-pipeline = "euclidqso.cli.main:pipeline"
-euclidqso = "euclidqso.cli.main:main"
+euclidkit = "euclidkit.cli.main:main"
+euclidkit-cutouts = "euclidkit.cli.cutout_cli:cutouts"
+euclidkit-spectra = "euclidkit.cli.spec_cli:main"
+euclidkit-composite = "euclidkit.cli.composite_cli:main"
+euclidkit-pipeline = "euclidkit.cli.main:pipeline"
+euclidkit = "euclidkit.cli.main:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["euclidqso*"]
+include = ["euclidkit*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "euclidqso.version.__version__"}
+version = {attr = "euclidkit.version.__version__"}
 
 [tool.setuptools.package-data]
-euclidqso = [
+euclidkit = [
     "data/templates/*",
     "data/filters/*", 
     "data/config/*",
@@ -124,7 +124,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["euclidqso"]
+known_first_party = ["euclidkit"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -132,7 +132,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=euclidqso",
+    "--cov=euclidkit",
     "--cov-report=term-missing",
 ]
 testpaths = ["tests"]
@@ -141,7 +141,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.coverage.run]
-source = ["euclidqso"]
+source = ["euclidkit"]
 omit = [
     "*/tests/*",
     "*/test_*.py",

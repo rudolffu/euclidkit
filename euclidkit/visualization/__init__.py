@@ -1,5 +1,5 @@
 """
-Visualization modules for euclidqso package.
+Visualization modules for euclidkit package.
 
 This module provides plotting and interactive visualization tools.
 """

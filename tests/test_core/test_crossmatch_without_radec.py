@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from astropy.table import Table
 
-from euclidqso.core.data_access import EuclidArchive
+from euclidkit.core.data_access import EuclidArchive
 
 
 def test_crossmatch_sources_object_id_only_table(monkeypatch):

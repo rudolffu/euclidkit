@@ -1,1 +1,0 @@
-"""Data files for euclidqso package."""

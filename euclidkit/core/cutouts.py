@@ -1,5 +1,5 @@
 """
-Image cutout generation module for euclidqso package.
+Image cutout generation module for euclidkit package.
 
 Provides functionality to generate cutouts from Euclid data products.
 """
@@ -21,8 +21,8 @@ from astropy.nddata.utils import Cutout2D
 from skimage.transform import resize
 from tqdm import tqdm
 
-from euclidqso.core.data_access import EuclidArchive
-from euclidqso.utils.io import load_table, save_table
+from euclidkit.core.data_access import EuclidArchive
+from euclidkit.utils.io import load_table, save_table
 
 logger = logging.getLogger(__name__)
 
@@ -710,7 +710,7 @@ def make_cutouts(
     
     Examples
     --------
-    >>> from euclidqso.core.cutouts import make_cutouts
+    >>> from euclidkit.core.cutouts import make_cutouts
     >>> make_cutouts('123456789', '/tmp/cutouts/')
     >>> make_cutouts({'ra': 150.0, 'dec': 2.5}, '/tmp/cutouts/', cutout_size=20)
     """

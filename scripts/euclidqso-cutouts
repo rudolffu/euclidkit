@@ -1,9 +1,0 @@
-#!/usr/bin/env python3
-"""
-Standalone script for Euclid cutout generation.
-"""
-
-from euclidqso.cli.cutout_cli import cutouts
-
-if __name__ == '__main__':
-    cutouts()

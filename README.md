@@ -64,8 +64,8 @@ euclidkit init-config --output my_config.yaml --template basic
 ### Basic Usage
 
 ```python
-# Note: the Python import path is currently still `euclidqso`.
-from euclidqso.core.data_access import EuclidArchive
+# Note: the Python import path is currently still `euclidkit`.
+from euclidkit.core.data_access import EuclidArchive
 
 # Initialize archive connection
 archive = EuclidArchive(environment='PDR')
@@ -248,7 +248,7 @@ combined = archive.combine_spectra_to_fits(
 Advanced spectrum compilation with chunking support.
 
 ```python
-from euclidqso.core.spectra import SpectrumCompiler
+from euclidkit.core.spectra import SpectrumCompiler
 
 compiler = SpectrumCompiler(max_extensions=5000)
 
@@ -278,8 +278,8 @@ metadata = compiler.create_metadata_table(
 #### Complete Spectroscopic Analysis Pipeline
 
 ```python
-from euclidqso.core.data_access import EuclidArchive
-from euclidqso.core.spectra import SpectrumCompiler
+from euclidkit.core.data_access import EuclidArchive
+from euclidkit.core.spectra import SpectrumCompiler
 import pandas as pd
 
 # 1. Initialize archive
@@ -343,7 +343,7 @@ euclidkit diagnostics --check-deps --check-data --check-desi
 
 ```python
 # Access DESI spectra in SDSS-compatible format
-from euclidqso.external.desi import get_desi_spectra
+from euclidkit.external.desi import get_desi_spectra
 
 desi_spectra = get_desi_spectra(
     ra=150.0, dec=12.5, 
@@ -355,7 +355,7 @@ desi_spectra = get_desi_spectra(
 ### Template Generation
 
 ```python
-from euclidqso.analysis.templates import TemplateGenerator
+from euclidkit.analysis.templates import TemplateGenerator
 
 generator = TemplateGenerator()
 template = generator.create_composite_template(

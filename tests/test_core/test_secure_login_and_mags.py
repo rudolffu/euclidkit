@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from astropy.table import Table
 
-from euclidqso.core.data_access import EuclidArchive
+from euclidkit.core.data_access import EuclidArchive
 
 
 class TestSecureLogin:
@@ -34,14 +34,14 @@ class TestSecureLogin:
         monkeypatch.setenv("EUCLID_USER", "kr_user")
         fake_keyring = Mock()
         fake_keyring.get_password.return_value = "kr_pass"
-        with patch("euclidqso.core.data_access.keyring", fake_keyring):
+        with patch("euclidkit.core.data_access.keyring", fake_keyring):
             self.archive.login()  # use_keyring defaults True
         self.archive.euclid.login.assert_called_once_with(user="kr_user", password="kr_pass")
 
     def test_login_with_prompt(self, monkeypatch):
         # Provide user explicitly; simulate interactive prompt
         fake_getpass = Mock(return_value="typed_pw")
-        with patch("euclidqso.core.data_access.getpass", fake_getpass):
+        with patch("euclidkit.core.data_access.getpass", fake_getpass):
             self.archive.login(user="prompt_user", prompt=True)
         self.archive.euclid.login.assert_called_once_with(user="prompt_user", password="typed_pw")
 

@@ -1,5 +1,5 @@
 """
-Configuration management for euclidqso.
+Configuration management for euclidkit.
 
 Handles default settings, user configuration files, and environment variables.
 """
@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Union
 
 
-class EuclidQSOConfig:
-    """Configuration manager for euclidqso package."""
+class EuclidKitConfig:
+    """Configuration manager for euclidkit package."""
     
     def __init__(self):
-        self.config_dir = Path.home() / '.euclidqso'
+        self.config_dir = Path.home() / '.euclidkit'
         self.config_file = self.config_dir / 'config.yaml'
         self._config = self._load_default_config()
         self._load_user_config()
@@ -30,7 +30,7 @@ class EuclidQSOConfig:
                     'ero': '/data/euc_ero_data_01/',
                 },
                 'credentials_file': '/media/user/cred.txt',
-                'cache_dir': str(Path.home() / '.euclidqso' / 'cache'),
+                'cache_dir': str(Path.home() / '.euclidkit' / 'cache'),
             },
             # Analysis settings
             'analysis': {
@@ -99,11 +99,11 @@ class EuclidQSOConfig:
     def _load_env_overrides(self):
         """Load configuration overrides from environment variables."""
         env_mappings = {
-            'EUCLIDQSO_CREDENTIALS': 'data.credentials_file',
-            'EUCLIDQSO_CACHE_DIR': 'data.cache_dir',
-            'EUCLIDQSO_LOG_LEVEL': 'logging.level',
-            'EUCLIDQSO_PARALLEL': 'processing.parallel',
-            'EUCLIDQSO_N_CORES': 'processing.n_cores',
+            'EUCLIDKIT_CREDENTIALS': 'data.credentials_file',
+            'EUCLIDKIT_CACHE_DIR': 'data.cache_dir',
+            'EUCLIDKIT_LOG_LEVEL': 'logging.level',
+            'EUCLIDKIT_PARALLEL': 'processing.parallel',
+            'EUCLIDKIT_N_CORES': 'processing.n_cores',
         }
         
         for env_var, config_path in env_mappings.items():
@@ -150,7 +150,7 @@ class EuclidQSOConfig:
 
 def generate_config_template(template_type: str = 'basic') -> Dict[str, Any]:
     """Generate configuration template."""
-    config = EuclidQSOConfig()
+    config = EuclidKitConfig()
     
     if template_type == 'basic':
         return {
@@ -189,4 +189,4 @@ def generate_config_template(template_type: str = 'basic') -> Dict[str, Any]:
 
 
 # Global configuration instance
-config = EuclidQSOConfig()
+config = EuclidKitConfig()

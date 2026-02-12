@@ -1,1 +1,1 @@
-"""Tests for euclidqso package."""
+"""Tests for euclidkit package."""

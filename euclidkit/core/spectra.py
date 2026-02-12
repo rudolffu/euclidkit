@@ -1,5 +1,5 @@
 """
-Spectral data handling module for euclidqso package.
+Spectral data handling module for euclidkit package.
 
 Provides functionality for loading, processing, and combining spectral data.
 """
@@ -18,8 +18,8 @@ from astropy.io import fits
 from astropy.table import Table
 from tqdm import tqdm
 
-from euclidqso.utils.io import ensure_dir
-from euclidqso.config import config
+from euclidkit.utils.io import ensure_dir
+from euclidkit.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ class SpectrumCompiler:
             primary_hdu = fits.PrimaryHDU()
             primary_hdu.header['COMMENT'] = f'Compiled Euclid spectra - Chunk {chunk_number}'
             primary_hdu.header['NSPECTRA'] = len(chunk)
-            primary_hdu.header['CREATOR'] = 'euclidqso.core.spectra.SpectrumCompiler'
+            primary_hdu.header['CREATOR'] = 'euclidkit.core.spectra.SpectrumCompiler'
             
             hdul_new = fits.HDUList([primary_hdu])
             

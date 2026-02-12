@@ -22,7 +22,7 @@ Approximate sky areas below are computed as `moc.sky_fraction * 41252.96` (deg²
 from importlib import resources
 from mocpy import MOC
 
-resource = resources.files("euclidqso").joinpath("data", "mocs", "dr1_mer_wide_bins_o13_moc.fits")
+resource = resources.files("euclidkit").joinpath("data", "mocs", "dr1_mer_wide_bins_o13_moc.fits")
 with resources.as_file(resource) as moc_path:
     moc = MOC.from_fits(moc_path)
 print("max_order:", moc.max_order)

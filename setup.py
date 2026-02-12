@@ -12,8 +12,8 @@ import sys
 if sys.version_info < (3, 9):
     raise RuntimeError("euclidkit requires Python 3.9 or later")
 
-# Read version from euclidqso/version.py
-version_file = os.path.join(os.path.dirname(__file__), "euclidqso", "version.py")
+# Read version from euclidkit/version.py
+version_file = os.path.join(os.path.dirname(__file__), "euclidkit", "version.py")
 version_info = {}
 if os.path.exists(version_file):
     with open(version_file) as f:
@@ -82,18 +82,18 @@ extras_require["complete"] = [
 # Entry points for command line scripts
 entry_points = {
     "console_scripts": [
-        "euclidkit=euclidqso.cli.main:main",
-        "euclidkit-cutouts=euclidqso.cli.cutout_cli:cutouts",
-        "euclidkit-spectra=euclidqso.cli.spec_cli:main", 
-        "euclidkit-composite=euclidqso.cli.composite_cli:main",
-        "euclidkit-pipeline=euclidqso.cli.main:pipeline",
-        "euclidqso=euclidqso.cli.main:main",
+        "euclidkit=euclidkit.cli.main:main",
+        "euclidkit-cutouts=euclidkit.cli.cutout_cli:cutouts",
+        "euclidkit-spectra=euclidkit.cli.spec_cli:main", 
+        "euclidkit-composite=euclidkit.cli.composite_cli:main",
+        "euclidkit-pipeline=euclidkit.cli.main:pipeline",
+        "euclidkit=euclidkit.cli.main:main",
     ],
 }
 
 # Package data
 package_data = {
-    "euclidqso": [
+    "euclidkit": [
         "data/templates/*",
         "data/filters/*",
         "data/config/*",

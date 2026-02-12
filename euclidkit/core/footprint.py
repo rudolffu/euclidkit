@@ -12,7 +12,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord
 from mocpy import MOC
 
-from euclidqso.utils.io import load_table, save_table
+from euclidkit.utils.io import load_table, save_table
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def get_moc_path(survey: str, data_release: str = "DR1", moc_path: Optional[str]
         )
 
     moc_filename = MOC_FILES[release_key][survey_key]
-    moc_resource = resources.files("euclidqso").joinpath("data", "mocs", moc_filename)
+    moc_resource = resources.files("euclidkit").joinpath("data", "mocs", moc_filename)
 
     try:
         with resources.as_file(moc_resource) as resolved_path:

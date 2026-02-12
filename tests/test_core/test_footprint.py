@@ -1,4 +1,4 @@
-from euclidqso.core.footprint import get_moc_path, list_available_surveys
+from euclidkit.core.footprint import get_moc_path, list_available_surveys
 
 
 def test_list_available_surveys_dr1_includes_cgv_input():

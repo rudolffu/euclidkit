@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from astropy.table import Table
 import numpy as np
 
-from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
+from euclidkit.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
 
 
 class TestCrossmatchCLI:
@@ -39,7 +39,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     # Mock the archive instance
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
@@ -84,7 +84,7 @@ class TestCrossmatchCLI:
             
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
@@ -118,7 +118,7 @@ class TestCrossmatchCLI:
             
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
@@ -148,7 +148,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
@@ -176,7 +176,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_results = Table({
@@ -208,7 +208,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.return_value = {'job_id': 'ABC123'}
@@ -237,7 +237,7 @@ class TestCrossmatchCLI:
         """Uploading a table should call archive helper and report job info."""
         input_file = self.create_temp_input_file()
         try:
-            with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+            with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                 mock_archive = Mock()
                 mock_archive_class.return_value = mock_archive
                 mock_archive.upload_user_table.return_value = {'job_id': 'job-77', 'format': 'csv'}
@@ -262,7 +262,7 @@ class TestCrossmatchCLI:
         """Synchronous uploads should report success."""
         input_file = self.create_temp_input_file()
         try:
-            with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+            with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                 mock_archive = Mock()
                 mock_archive_class.return_value = mock_archive
                 mock_archive.upload_user_table.return_value = {'job_id': None, 'format': 'fits'}
@@ -284,7 +284,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
@@ -313,7 +313,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
@@ -343,7 +343,7 @@ class TestCrossmatchCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_archive.crossmatch_sources.side_effect = Exception("Connection failed")
@@ -367,7 +367,7 @@ class TestCrossmatchCLI:
         input_file = self.create_temp_input_file()
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_results = Table({
@@ -397,7 +397,7 @@ class TestCrossmatchCLI:
         input_file = self.create_temp_input_file()
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     mock_results = Table({
@@ -449,7 +449,7 @@ class TestQuerySpectraCLI:
         
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
                     
@@ -460,7 +460,7 @@ class TestQuerySpectraCLI:
                     })
                     mock_archive.query_spectra_sources.return_value = mock_spectra
                     
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
                         result = self.runner.invoke(query_spectra, [
                             '--crossmatch', crossmatch_file,
                             '--output', output_file.name
@@ -480,7 +480,7 @@ class TestQuerySpectraCLI:
         crossmatch_file = self.create_temp_crossmatch_file()
         try:
             with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-                with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+                with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                     mock_archive = Mock()
                     mock_archive_class.return_value = mock_archive
 
@@ -490,7 +490,7 @@ class TestQuerySpectraCLI:
                     })
                     mock_archive.query_spectra_sources.return_value = mock_spectra
 
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
                         result = self.runner.invoke(query_spectra, [
                             '--crossmatch', crossmatch_file,
                             '--output', output_file.name
@@ -519,7 +519,7 @@ class TestQuerySpectraCLI:
     def test_query_spectra_instrument_breakdown(self):
         """Test instrument breakdown display."""
         with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
-            with patch('euclidqso.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
+            with patch('euclidkit.cli.crossmatch_cli.EuclidArchive') as mock_archive_class:
                 mock_archive = Mock()
                 mock_archive_class.return_value = mock_archive
                 
@@ -530,7 +530,7 @@ class TestQuerySpectraCLI:
                 })
                 mock_archive.query_spectra_sources.return_value = mock_spectra
                 
-                with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
+                with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.crossmatch_table):
                     result = self.runner.invoke(query_spectra, [
                         '--crossmatch', 'dummy.fits',
                         '--output', output_file.name,
@@ -573,7 +573,7 @@ class TestCompileSpectraCLI:
         
         try:
             with tempfile.TemporaryDirectory() as output_dir:
-                with patch('euclidqso.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
+                with patch('euclidkit.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
                     mock_compiler = Mock()
                     mock_compiler_class.return_value = mock_compiler
                     
@@ -584,7 +584,7 @@ class TestCompileSpectraCLI:
                     mock_compiler.compile_spectra.return_value = output_files
                     mock_compiler.create_metadata_table.return_value = f"{output_dir}/compiled_spectra_metadata.fits"
                     
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
@@ -609,13 +609,13 @@ class TestCompileSpectraCLI:
         
         try:
             with tempfile.TemporaryDirectory() as output_dir:
-                with patch('euclidqso.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
+                with patch('euclidkit.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
                     mock_compiler = Mock()
                     mock_compiler_class.return_value = mock_compiler
                     mock_compiler.compile_spectra.return_value = []
                     mock_compiler.create_metadata_table.return_value = "metadata.fits"
                     
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
@@ -644,7 +644,7 @@ class TestCompileSpectraCLI:
         
         try:
             with tempfile.TemporaryDirectory() as output_dir:
-                with patch('euclidqso.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
+                with patch('euclidkit.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
                     mock_compiler = Mock()
                     mock_compiler_class.return_value = mock_compiler
                     
@@ -657,7 +657,7 @@ class TestCompileSpectraCLI:
                     mock_compiler.compile_spectra.return_value = output_files
                     mock_compiler.create_metadata_table.return_value = f"{output_dir}/metadata.fits"
                     
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir
@@ -678,12 +678,12 @@ class TestCompileSpectraCLI:
         
         try:
             with tempfile.TemporaryDirectory() as output_dir:
-                with patch('euclidqso.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
+                with patch('euclidkit.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
                     mock_compiler = Mock()
                     mock_compiler_class.return_value = mock_compiler
                     mock_compiler.compile_spectra.side_effect = Exception("Compilation failed")
                     
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir
@@ -701,13 +701,13 @@ class TestCompileSpectraCLI:
         
         try:
             with tempfile.TemporaryDirectory() as output_dir:
-                with patch('euclidqso.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
+                with patch('euclidkit.cli.crossmatch_cli.SpectrumCompiler') as mock_compiler_class:
                     mock_compiler = Mock()
                     mock_compiler_class.return_value = mock_compiler
                     mock_compiler.compile_spectra.return_value = []
                     mock_compiler.create_metadata_table.return_value = "metadata.fits"
                     
-                    with patch('euclidqso.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
+                    with patch('euclidkit.cli.crossmatch_cli.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,

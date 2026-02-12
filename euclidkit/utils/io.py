@@ -1,5 +1,5 @@
 """
-Input/output utilities for euclidqso package.
+Input/output utilities for euclidkit package.
 """
 
 import os
@@ -208,7 +208,7 @@ class DataLoader:
             Cache directory for temporary files
         """
         if cache_dir is None:
-            cache_dir = Path.home() / '.euclidqso' / 'cache'
+            cache_dir = Path.home() / '.euclidkit' / 'cache'
         
         self.cache_dir = ensure_dir(cache_dir)
         logger.info(f"Initialized DataLoader with cache: {self.cache_dir}")

@@ -1,5 +1,5 @@
 """
-Data access module for euclidqso package.
+Data access module for euclidkit package.
 
 Provides interfaces to Euclid science archive and data volumes.
 """
@@ -18,8 +18,8 @@ from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
-from euclidqso.config import config
-from euclidqso.utils.io import load_table, save_table
+from euclidkit.config import config
+from euclidkit.utils.io import load_table, save_table
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class EuclidArchive:
         euclid = self._ensure_client()
 
         if credentials_file is None:
-            credentials_file = os.environ.get('EUCLIDQSO_CREDENTIALS_FILE') or config.get('data.credentials_file')
+            credentials_file = os.environ.get('EUCLIDKIT_CREDENTIALS_FILE') or config.get('data.credentials_file')
         
         try:
             # 1) Credentials file (on-disk). Use only if explicitly provided or configured.
@@ -136,7 +136,7 @@ class EuclidArchive:
                     # 3) OS keyring
                     if use_user and use_keyring and keyring is not None:
                         try:
-                            kr_pass = keyring.get_password('euclidqso', use_user)
+                            kr_pass = keyring.get_password('euclidkit', use_user)
                         except Exception:
                             kr_pass = None
                         if kr_pass:
@@ -152,7 +152,7 @@ class EuclidArchive:
                             logger.info(f"Successfully logged in as {use_user} via prompt")
                             if store_in_keyring and keyring is not None:
                                 try:
-                                    keyring.set_password('euclidqso', use_user, pw)
+                                    keyring.set_password('euclidkit', use_user, pw)
                                 except Exception:
                                     pass
                         else:
@@ -711,7 +711,7 @@ class EuclidArchive:
         results_url = _get_attr(job, 'remote_results_location')
 
         job_info = {
-            'type': 'euclidqso_crossmatch_async_job',
+            'type': 'euclidkit_crossmatch_async_job',
             'environment': self.environment,
             'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
             'job_id': job_id,
@@ -875,7 +875,7 @@ class EuclidArchive:
         fits.HDU
             Individual spectrum HDU
         """
-        from euclidqso.core.spectra import SpectrumLoader
+        from euclidkit.core.spectra import SpectrumLoader
         
         loader = SpectrumLoader()
         file_path = loader.verify_spectrum_path(datalabs_path, file_name)
@@ -923,7 +923,7 @@ class EuclidArchive:
         str
             Path to the created FITS file
         """
-        from euclidqso.core.spectra import SpectrumCompiler
+        from euclidkit.core.spectra import SpectrumCompiler
         
         # Limit number of spectra if requested
         if max_spectra is not None:

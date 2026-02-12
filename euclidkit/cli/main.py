@@ -10,11 +10,11 @@ from pathlib import Path
 import yaml
 from typing import Optional
 
-from euclidqso.version import __version__
-from euclidqso.config import generate_config_template
-from euclidqso.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
-from euclidqso.cli.cutout_cli import cutouts
-from euclidqso.cli.footprint_cli import select_footprint
+from euclidkit.version import __version__
+from euclidkit.config import generate_config_template
+from euclidkit.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
+from euclidkit.cli.cutout_cli import cutouts
+from euclidkit.cli.footprint_cli import select_footprint
 
 
 @click.group()
