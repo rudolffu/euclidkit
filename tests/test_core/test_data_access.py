@@ -66,6 +66,19 @@ class TestEuclidArchive:
             archive = EuclidArchive(environment=env)
             assert archive.get_mer_table_name() == expected
 
+    def test_get_spectra_source_table_name(self):
+        """Spectra source table should map to the expected release prefix by environment."""
+        test_cases = [
+            ('PDR', 'q1.spectra_source'),
+            ('OTF', 'q1.spectra_source'),
+            ('REG', 'dr1.spectra_source'),
+            ('IDR', 'dr1.spectra_source'),
+        ]
+
+        for env, expected in test_cases:
+            archive = EuclidArchive(environment=env)
+            assert archive._get_spectra_source_table_name() == expected
+
     @patch('euclidkit.core.data_access.Euclid')
     def test_login_default_credentials(self, mock_euclid_class):
         """Test login with default credentials."""
@@ -236,6 +249,21 @@ class TestEuclidArchive:
         result = self.archive.query_spectra_sources(crossmatch_table=cross_tab)
         assert isinstance(result, Table)
         assert len(result) == 3
+
+    def test_query_spectra_batch_uses_environment_table_name(self):
+        """Spectra batch query should join the environment-specific spectra table."""
+        batch = Table({'object_id': [100001]})
+        self.archive.environment = 'IDR'
+        self.mock_client.launch_job.return_value.get_results.return_value = Table({
+            'source_id': [100001],
+            'object_id': [100001],
+        })
+
+        self.archive._query_spectra_batch(batch)
+
+        args, _ = self.mock_client.launch_job.call_args
+        query = args[0]
+        assert 'JOIN dr1.spectra_source AS s' in query
 
     def test_query_spectra_sources_with_output_file(self):
         """Test spectral source querying with output file."""

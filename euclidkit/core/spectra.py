@@ -19,16 +19,12 @@ from astropy.table import Table
 from tqdm import tqdm
 
 from euclidkit.utils.io import ensure_dir
-from euclidkit.config import config
 
 logger = logging.getLogger(__name__)
 
 
 class SpectrumLoader:
     """Loader for individual Euclid spectra."""
-    
-    def __init__(self):
-        self.data_volumes = config.get('data.euclid_volumes', {})
     
     def load_spectrum(self, file_path: str, hdu_index: int = 1) -> 'ExtensionHDU':
         """

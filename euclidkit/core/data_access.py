@@ -493,6 +493,17 @@ class EuclidArchive:
             '.txt': 'csv',
         }
         return mapping.get(suffix.lower(), 'votable')
+
+    def _get_spectra_source_table_name(self) -> str:
+        """Get spectra source table name for current environment."""
+        prefix_by_env = {
+            'PDR': 'q1',
+            'OTF': 'q1',
+            'REG': 'dr1',
+            'IDR': 'dr1',
+        }
+        prefix = prefix_by_env.get(self.environment, 'q1')
+        return f"{prefix}.spectra_source"
     
     def _crossmatch_batch(
         self, 
@@ -747,6 +758,7 @@ class EuclidArchive:
         try:
             # Use temporary upload with launch_job
             upload_name = f"user_spectra_batch_{np.random.randint(10000, 99999)}"
+            spectra_source_table = self._get_spectra_source_table_name()
             
             # Construct spectra query
             query = f"""
@@ -754,7 +766,7 @@ class EuclidArchive:
                    s.file_name, s.hdu_index,
                    u.object_id
             FROM TAP_UPLOAD.{upload_name} AS u
-            JOIN sedm.spectra_source AS s
+            JOIN {spectra_source_table} AS s
             ON s.source_id = u.object_id
             WHERE s.datalabs_path IS NOT NULL
             ORDER BY s.source_id

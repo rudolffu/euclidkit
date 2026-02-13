@@ -155,7 +155,7 @@ def query_spectra(crossmatch: Optional[str], output: str,
     """
     Query spectral sources for objects from crossmatch or object ID list.
     
-    This command queries the sedm.spectra_source table to find available
+    This command queries the environment-specific spectra_source table to find available
     spectra for objects identified in crossmatching or provided as a list.
     
     If --combine-output is provided, automatically combines the found spectra
