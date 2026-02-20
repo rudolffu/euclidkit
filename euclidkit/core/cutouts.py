@@ -7,6 +7,7 @@ Provides functionality to generate cutouts from Euclid data products.
 import os
 import re
 import logging
+import tempfile
 from pathlib import Path
 from typing import Union, Optional, List, Dict, Any, Tuple
 
@@ -45,6 +46,7 @@ class CutoutGenerator:
             self.archive = EuclidArchive(environment=environment)
         else:
             self.archive = archive
+        self._last_cutana_mosaic_query: Optional[str] = None
         
         logger.info(f"Initialized CutoutGenerator for {environment} environment")
     
@@ -138,9 +140,10 @@ class CutoutGenerator:
         output_file: Union[str, Path],
         instrument_name: str = 'VIS',
         nisp_filters: Optional[List[str]] = None,
-        cutout_size: str = 'pixel',
-        cutout_size_value: float = 50.0,
+        cutout_size: str = 'arcsec',
+        cutout_size_value: float = 15.0,
         drop_noncutana_cols: bool = True,
+        idr_field: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Generate a Cutana-compatible source catalogue from source coordinates.
@@ -160,12 +163,16 @@ class CutoutGenerator:
             Instrument selection: 'VIS' or 'NISP'.
         nisp_filters : List[str], optional
             Optional subset of NISP filters when instrument is 'NISP'.
-        cutout_size : str, default 'pixel'
+        cutout_size : str, default 'arcsec'
             Cutana diameter unit, either 'pixel' or 'arcsec'.
-        cutout_size_value : float, default 50.0
+        cutout_size_value : float, default 15.0
             Constant diameter value applied to each source.
         drop_noncutana_cols : bool, default True
             When False, keep additional user columns in output.
+        idr_field : {'WIDE', 'DEEP'}, optional
+            IDR field selector used when resolving ``object_id`` values to
+            coordinates in ``environment='IDR'``. Defaults to 'WIDE' when
+            omitted, matching ``EuclidArchive.crossmatch_sources`` behavior.
 
         Returns
         -------
@@ -184,7 +191,7 @@ class CutoutGenerator:
         if len(df_input) == 0:
             raise ValueError("No sources found in input")
 
-        df_coords = self._resolve_coordinates(df_input)
+        df_coords = self._resolve_coordinates(df_input, idr_field=idr_field)
         if len(df_coords) == 0:
             raise ValueError("Could not resolve source coordinates from input")
 
@@ -192,14 +199,21 @@ class CutoutGenerator:
         ra_col = radec_colnames['ra_colname']
         dec_col = radec_colnames['dec_colname']
 
-        df_files = self._get_files_mosaic(
+        if 'segmentation_map_id' not in df_coords.columns:
+            raise ValueError("segmentation_map_id is required to query mosaic_product")
+
+        df_files = self._get_files_mosaic_from_segmentation(
             df_coords,
             instrument_name=instrument_name,
             nisp_filters=nisp_filters,
             radec_colnames=radec_colnames,
         )
         if len(df_files) == 0:
-            raise ValueError("No mosaic files matched the provided sources")
+            query_msg = self._last_cutana_mosaic_query or "<unavailable>"
+            raise ValueError(
+                "No mosaic files matched the provided sources.\n"
+                f"Second query was:\n{query_msg}"
+            )
 
         df_files = df_files.copy()
         df_files['fits_file_paths'] = (
@@ -322,16 +336,17 @@ class CutoutGenerator:
         
         return df_files
     
-    def _resolve_coordinates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Resolve object_ids to coordinates if needed."""
+    def _resolve_coordinates(self, df: pd.DataFrame, idr_field: Optional[str] = None) -> pd.DataFrame:
+        """Resolve source rows to include coordinates and segmentation_map_id."""
         
-        # If we already have coordinates, return as-is
-        if self._has_coordinates(df):
-            return df
-        
-        # If we have object_ids, resolve them to coordinates
+        # If object IDs are present, always resolve via MER to obtain segmentation_map_id.
         if 'object_id' in df.columns:
-            return self._lookup_coordinates(df)
+            return self._lookup_mer_source_info(df, idr_field=idr_field)
+
+        # If we only have coordinates, spatially crossmatch once against MER to obtain
+        # object_id and segmentation_map_id, then continue with segmentation-based joins.
+        if self._has_coordinates(df):
+            return self._lookup_mer_source_info_by_position(df, idr_field=idr_field)
         
         logger.error("No coordinates or object_ids found in sources")
         return pd.DataFrame()
@@ -342,49 +357,235 @@ class CutoutGenerator:
         return (('ra' in cols and 'dec' in cols) or 
                 ('right_ascension' in cols and 'declination' in cols))
     
-    def _lookup_coordinates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Look up coordinates from object_ids via archive query."""
+    def _lookup_mer_source_info(self, df: pd.DataFrame, idr_field: Optional[str] = None) -> pd.DataFrame:
+        """Look up MER source metadata from object_ids via archive query."""
         
         if not self.archive._logged_in:
             self.archive.login()
         
-        # Build query to get coordinates from object_ids
-        # Ensure object_id is treated consistently as string for joining
         df = df.copy()
-        df['object_id'] = df['object_id'].astype(str)
-        object_ids = df['object_id'].tolist()
-        id_list = "','".join(str(oid) for oid in object_ids)
-        
-        # Query different catalogs depending on environment
-        if self.archive.environment == 'PDR':
-            table_name = 'mer_catalogue'
-        else:
-            table_name = 'mer_final_catalog_fits_file_regreproc1_r2'
-        
+
+        # Reuse environment-specific MER selection from EuclidArchive.
+        table_name = self.archive._get_mer_table_name(idr_field=idr_field)
+
+        # Upload object IDs and perform a server-side join, matching data_access.py pattern.
+        upload_df = df[['object_id']].drop_duplicates().copy()
+        upload_table = Table.from_pandas(upload_df)
+        with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
+            upload_table.write(tmp_file.name, format='votable', overwrite=True)
+            tmp_name = tmp_file.name
+
+        upload_name = f"user_cutana_oid_{np.random.randint(10000, 99999)}"
         query = f"""
-        SELECT object_id, right_ascension, declination
-        FROM {table_name}
-        WHERE object_id IN ('{id_list}')
+        SELECT u.object_id, m.right_ascension, m.declination, m.segmentation_map_id
+        FROM TAP_UPLOAD.{upload_name} AS u
+        JOIN {table_name} AS m ON u.object_id = m.object_id
+        ORDER BY u.object_id
         """
-        
+
         try:
-            job = self.archive.euclid.launch_job_async(query, verbose=False)
+            job = self.archive.euclid.launch_job_async(
+                query,
+                upload_resource=tmp_name,
+                upload_table_name=upload_name,
+            )
             if job is None:
-                logger.error("Failed to resolve object_ids to coordinates")
+                logger.error("Failed to resolve object_ids to MER metadata")
                 return pd.DataFrame()
             
             coords_df = job.get_results().to_pandas()
-            # Ensure matching dtype to avoid pandas merge type error
-            if 'object_id' in coords_df.columns:
+            # Ensure matching dtype to avoid pandas merge type issues.
+            if 'object_id' in coords_df.columns and 'object_id' in df.columns:
                 coords_df['object_id'] = coords_df['object_id'].astype(str)
-            logger.info(f"Resolved {len(coords_df)} coordinates from {len(object_ids)} object_ids")
+                df['object_id'] = df['object_id'].astype(str)
+            logger.info(
+                "Resolved MER metadata for %d of %d object_ids",
+                len(coords_df),
+                len(upload_df),
+            )
             
-            # Merge back with original data
+            # Merge back with original data. Drop potentially stale MER-style
+            # columns first to avoid pandas suffixing to *_x/*_y.
+            drop_if_present = [
+                col for col in ['right_ascension', 'declination', 'segmentation_map_id']
+                if col in df.columns
+            ]
+            if drop_if_present:
+                df = df.drop(columns=drop_if_present)
             return df.merge(coords_df, on='object_id', how='inner')
             
         except Exception as e:
-            logger.error(f"Error resolving coordinates: {e}")
+            logger.error(f"Error resolving MER metadata: {e}")
             return pd.DataFrame()
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+
+    def _lookup_mer_source_info_by_position(
+        self,
+        df: pd.DataFrame,
+        idr_field: Optional[str] = None,
+        radius_arcsec: float = 1.0,
+    ) -> pd.DataFrame:
+        """
+        Resolve MER source metadata from input coordinates via archive crossmatch.
+
+        Uses EuclidArchive.crossmatch_sources to reuse environment-specific MER table
+        selection and ensure segmentation_map_id is retrieved.
+        """
+        if not self.archive._logged_in:
+            self.archive.login()
+
+        radec_colnames = self._get_radec_colnames(df.columns.tolist())
+        ra_col = radec_colnames['ra_colname']
+        dec_col = radec_colnames['dec_colname']
+
+        try:
+            match_table = self.archive.crossmatch_sources(
+                user_table=Table.from_pandas(df.copy()),
+                radius=radius_arcsec,
+                ra_col=ra_col,
+                dec_col=dec_col,
+                use_object_id=False,
+                idr_field=idr_field,
+            )
+            if len(match_table) == 0:
+                return pd.DataFrame()
+
+            match_df = match_table.to_pandas()
+            # Keep nearest match per input coordinate.
+            if 'separation_arcsec' in match_df.columns:
+                match_df = match_df.sort_values('separation_arcsec').drop_duplicates(
+                    subset=[ra_col, dec_col],
+                    keep='first',
+                )
+
+            # Use MER coordinates when available for consistency downstream.
+            if 'mer_ra' in match_df.columns:
+                match_df['right_ascension'] = match_df['mer_ra']
+            elif ra_col in match_df.columns:
+                match_df['right_ascension'] = match_df[ra_col]
+
+            if 'mer_dec' in match_df.columns:
+                match_df['declination'] = match_df['mer_dec']
+            elif dec_col in match_df.columns:
+                match_df['declination'] = match_df[dec_col]
+
+            if 'segmentation_map_id' not in match_df.columns:
+                logger.error("Crossmatch did not return segmentation_map_id")
+                return pd.DataFrame()
+
+            # Preserve user columns by merging back on input coordinate columns.
+            keep_cols = [c for c in ['object_id', 'right_ascension', 'declination', 'segmentation_map_id'] if c in match_df.columns]
+            select_cols = []
+            for col in [ra_col, dec_col] + keep_cols:
+                if col not in select_cols:
+                    select_cols.append(col)
+            merged = df.merge(
+                match_df[select_cols].drop_duplicates(),
+                on=[ra_col, dec_col],
+                how='inner',
+            )
+            return merged
+        except Exception as e:
+            logger.error(f"Error resolving MER metadata by position: {e}")
+            return pd.DataFrame()
+
+    def _get_files_mosaic_from_segmentation(
+        self,
+        df: pd.DataFrame,
+        instrument_name: str,
+        nisp_filters: Optional[List[str]],
+        radec_colnames: Dict[str, str],
+    ) -> pd.DataFrame:
+        """
+        Get mosaic files using segmentation_map_id -> tile_index shortcut.
+
+        This avoids per-source positional CONTAINS crossmatch by joining source rows
+        to ``sedm.mosaic_product`` on the first 9 digits of segmentation_map_id.
+        """
+        if not self.archive._logged_in:
+            self.archive.login()
+        self.archive._ensure_client()
+
+        required_cols = [radec_colnames['ra_colname'], radec_colnames['dec_colname'], 'segmentation_map_id']
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            self._last_cutana_mosaic_query = (
+                f"<skipped: missing columns for segmentation shortcut: {missing_cols}; "
+                f"available columns={list(df.columns)}>"
+            )
+            logger.warning("Missing columns for segmentation shortcut: %s", missing_cols)
+            return pd.DataFrame()
+
+        df_work = df[required_cols + ([c for c in ['object_id'] if c in df.columns])].copy()
+        df_work = df_work[df_work['segmentation_map_id'].notna()]
+        if len(df_work) == 0:
+            self._last_cutana_mosaic_query = (
+                "<skipped: segmentation_map_id present but all values are null/NaN after preprocessing>"
+            )
+            logger.warning("Segmentation shortcut skipped: all segmentation_map_id values are null/NaN.")
+            return pd.DataFrame()
+
+        upload_table = Table.from_pandas(df_work)
+        with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
+            upload_table.write(tmp_file.name, format='votable', overwrite=True)
+            tmp_name = tmp_file.name
+
+        ra_col = radec_colnames['ra_colname']
+        dec_col = radec_colnames['dec_colname']
+        upload_name = f"user_cutana_seg_{np.random.randint(10000, 99999)}"
+        object_id_select = "u.object_id," if 'object_id' in df_work.columns else ""
+
+        query = f"""
+        SELECT
+            {object_id_select}
+            u.{ra_col} AS {ra_col},
+            u.{dec_col} AS {dec_col},
+            u.segmentation_map_id,
+            mosaics.file_name, mosaics.file_path, mosaics.datalabs_path,
+            mosaics.mosaic_product_oid, mosaics.tile_index, mosaics.instrument_name,
+            mosaics.filter_name, mosaics.ra AS image_ra, mosaics.dec AS image_dec
+        FROM TAP_UPLOAD.{upload_name} AS u
+        JOIN sedm.mosaic_product AS mosaics
+          ON CAST(mosaics.tile_index AS CHAR(25)) = SUBSTRING(CAST(u.segmentation_map_id AS CHAR(25)), 1, 9)
+        WHERE mosaics.datalabs_path IS NOT NULL
+          AND mosaics.instrument_name='{instrument_name}'
+        """
+
+        if instrument_name == 'NISP' and nisp_filters:
+            filter_conditions = " OR ".join([f"mosaics.filter_name='{f}'" for f in nisp_filters])
+            query += f" AND ({filter_conditions})"
+        query += f" ORDER BY u.{ra_col} ASC"
+        self._last_cutana_mosaic_query = query.strip()
+        logger.warning("Cutana mosaic query:\n%s", self._last_cutana_mosaic_query)
+
+        try:
+            job = self.archive.euclid.launch_job_async(
+                query,
+                upload_resource=tmp_name,
+                upload_table_name=upload_name,
+            )
+
+            if job is None:
+                logger.error("Query for segmentation-based mosaic files failed")
+                return pd.DataFrame()
+
+            df_result = job.get_results().to_pandas()
+            if len(df_result) == 0:
+                logger.warning("Cutana mosaic query returned 0 rows.")
+                return pd.DataFrame()
+
+            # Keep one record per source/filter when duplicates are returned.
+            df_result = df_result.drop_duplicates(subset=[ra_col, 'filter_name'], keep='first')
+            logger.info("Found %d mosaic file matches via segmentation shortcut", len(df_result))
+            return df_result
+        except Exception as e:
+            logger.error(f"Error querying segmentation-based mosaic files: {e}")
+            return pd.DataFrame()
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
     
     def _get_radec_colnames(self, columns: List[str]) -> Dict[str, str]:
         """Determine RA/Dec column names."""
@@ -425,8 +626,7 @@ class CutoutGenerator:
                    {dec} AS {radec_colnames['dec_colname']},
                    mosaics.file_name, mosaics.file_path, mosaics.datalabs_path,
                    mosaics.mosaic_product_oid, mosaics.tile_index, mosaics.instrument_name,
-                   mosaics.filter_name, mosaics.ra AS image_ra, mosaics.dec AS image_dec,
-                   DISTANCE(POINT('ICRS', mosaics.ra, mosaics.dec), POINT('ICRS', {ra}, {dec})) AS dist
+                   mosaics.filter_name, mosaics.ra AS image_ra, mosaics.dec AS image_dec
             FROM sedm.mosaic_product AS mosaics
             WHERE mosaics.datalabs_path IS NOT NULL
               AND mosaics.instrument_name='{instrument_name}'
@@ -454,8 +654,10 @@ class CutoutGenerator:
         logger.info(f"Found {len(df_result)} mosaic file matches")
         
         if len(df_result) > 0:
-            idx_min = df_result.groupby([radec_colnames["ra_colname"], 'filter_name'])['dist'].idxmin()
-            df_result = df_result.loc[idx_min.values]
+            df_result = df_result.drop_duplicates(
+                subset=[radec_colnames["ra_colname"], 'filter_name'],
+                keep='first',
+            )
         
         return df_result
     
@@ -483,8 +685,7 @@ class CutoutGenerator:
                    {dec} AS {radec_colnames['dec_colname']},
                    frames.file_name, frames.file_path, frames.datalabs_path,
                    frames.instrument_name, frames.filter_name, frames.observation_id,
-                   frames.ra AS image_ra, frames.dec AS image_dec,
-                   DISTANCE(POINT('ICRS', frames.ra, frames.dec), POINT('ICRS', {ra}, {dec})) AS dist
+                   frames.ra AS image_ra, frames.dec AS image_dec
             FROM sedm.calibrated_frame AS frames
             WHERE frames.datalabs_path IS NOT NULL
               AND frames.instrument_name='{instrument_name}'
@@ -536,8 +737,7 @@ class CutoutGenerator:
                    {dec} AS {radec_colnames['dec_colname']},
                    frames.file_name, frames.file_path, frames.datalabs_path,
                    frames.instrument_name, frames.filter_name, frames.observation_id,
-                   frames.ra AS image_ra, frames.dec AS image_dec,
-                   DISTANCE(POINT('ICRS', frames.ra, frames.dec), POINT('ICRS', {ra}, {dec})) AS dist
+                   frames.ra AS image_ra, frames.dec AS image_dec
             FROM observation_stack AS frames
             WHERE frames.datalabs_path IS NOT NULL
               AND frames.instrument_name='{instrument_name}'
@@ -562,8 +762,10 @@ class CutoutGenerator:
         logger.info(f"Found {len(df_result)} stacked frame file matches")
         
         if len(df_result) > 0:
-            idx_min = df_result.groupby([radec_colnames["ra_colname"], 'filter_name'])['dist'].idxmin()
-            df_result = df_result.loc[idx_min.values]
+            df_result = df_result.drop_duplicates(
+                subset=[radec_colnames["ra_colname"], 'filter_name'],
+                keep='first',
+            )
         
         return df_result
     

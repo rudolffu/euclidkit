@@ -325,6 +325,12 @@ class EuclidArchive:
 
         crossmatch_results = []
         batch_size = 1000  # Process in batches
+        use_async_batches = len(user_data) > 2000
+        if use_async_batches:
+            logger.info(
+                "Input has %d rows (>2000); forcing asynchronous TAP jobs for all batches",
+                len(user_data),
+            )
         
         if full_async:
             batches = [(0, len(user_data))]
@@ -346,7 +352,7 @@ class EuclidArchive:
                 radius,
                 mer_table,
                 use_object_id,
-                force_async=False,
+                force_async=use_async_batches,
             )
             
             if len(batch_result) > 0:

@@ -305,6 +305,21 @@ class TestEuclidArchive:
         assert results[0] == 0
         assert results[-1] == 4998
 
+    def test_crossmatch_sources_forces_async_batches_over_2000_rows(self):
+        """Crossmatch should force async batch jobs when input row count exceeds 2000."""
+        self.archive._logged_in = True
+        large_table = Table({
+            'ra': np.linspace(150.0, 151.0, 2501),
+            'dec': np.linspace(2.0, 3.0, 2501),
+        })
+
+        with patch.object(self.archive, '_crossmatch_batch', return_value=Table()) as mock_batch:
+            self.archive.crossmatch_sources(user_table=large_table, radius=1.0)
+
+        assert mock_batch.call_count == 3
+        for call in mock_batch.call_args_list:
+            assert call.kwargs['force_async'] is True
+
     def test_upload_user_table_from_file(self, tmp_path):
         """Uploading from file should infer format and allow overwrite."""
         table_path = tmp_path / 'sample.csv'

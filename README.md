@@ -161,8 +161,8 @@ euclidkit query-cutana \
     --sources my_sources.fits \
     --output cutana_input.csv \
     --instrument VIS \
-    --cutout-size pixel \
-    --cutout-size-value 50
+    --cutout-size arcsec \
+    --cutout-size-value 15
 
 # NISP example with explicit filters
 euclidkit query-cutana \
@@ -170,6 +170,8 @@ euclidkit query-cutana \
     --output cutana_input_nisp.csv \
     --instrument NISP \
     --nisp-filters NIR_Y,NIR_H \
+    --environment IDR \
+    --idr-field DEEP \
     --cutout-size arcsec \
     --cutout-size-value 15
 ```

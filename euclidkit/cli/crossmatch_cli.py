@@ -258,20 +258,23 @@ def query_spectra(crossmatch: Optional[str], output: str,
               show_default=True, help='Instrument used for mosaic selection')
 @click.option('--nisp-filters', type=str,
               help='Comma-separated NISP filters (e.g. NIR_Y,NIR_H)')
-@click.option('--cutout-size', type=click.Choice(['pixel', 'arcsec']), default='pixel',
+@click.option('--cutout-size', type=click.Choice(['pixel', 'arcsec']), default='arcsec',
               show_default=True, help='Diameter unit for Cutana file')
-@click.option('--cutout-size-value', type=float, default=50.0, show_default=True,
+@click.option('--cutout-size-value', type=float, default=15.0, show_default=True,
               help='Constant diameter value for all sources')
 @click.option('--drop-noncutana-cols/--keep-noncutana-cols', default=True, show_default=True,
               help='Drop or keep non-Cutana columns from the input table')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
+@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+              show_default=True,
+              help='IDR field selection (only used when --environment=IDR)')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optional[str],
                  cutout_size: str, cutout_size_value: float, drop_noncutana_cols: bool,
-                 environment: str, credentials: Optional[str], verbose: bool):
+                 environment: str, idr_field: str, credentials: Optional[str], verbose: bool):
     """
     Generate a Cutana input catalogue from a source table.
 
@@ -309,6 +312,7 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
             cutout_size=cutout_size,
             cutout_size_value=cutout_size_value,
             drop_noncutana_cols=drop_noncutana_cols,
+            idr_field=idr_field.upper() if environment == 'IDR' else None,
         )
 
         click.echo(f"Cutana query completed: {len(result_df)} sources with mosaic matches")

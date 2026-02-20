@@ -71,6 +71,44 @@ class TestQueryCutanaCLI:
                 assert call_kwargs['nisp_filters'] == ['NIR_Y', 'NIR_H']
                 assert call_kwargs['cutout_size'] == 'arcsec'
                 assert call_kwargs['cutout_size_value'] == 15.0
+                assert call_kwargs['idr_field'] is None
+        finally:
+            os.unlink(sources_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_query_cutana_idr_field_is_forwarded(self):
+        """IDR field selection should be forwarded when environment is IDR."""
+        sources_file = self._create_temp_sources_file()
+
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as output_file:
+                mock_archive = Mock()
+                mock_generator = Mock()
+                mock_generator.archive = mock_archive
+                mock_generator.generate_cutana_input.return_value = pd.DataFrame(
+                    {'SourceID': ['OBJ_100001']}
+                )
+
+                with patch('euclidkit.core.cutouts.CutoutGenerator', return_value=mock_generator):
+                    with patch('euclidkit.utils.io.load_table', return_value=self.sample_table):
+                        result = self.runner.invoke(
+                            query_cutana,
+                            [
+                                '--sources',
+                                sources_file,
+                                '--output',
+                                output_file.name,
+                                '--environment',
+                                'IDR',
+                                '--idr-field',
+                                'DEEP',
+                            ],
+                        )
+
+                assert result.exit_code == 0
+                call_kwargs = mock_generator.generate_cutana_input.call_args.kwargs
+                assert call_kwargs['idr_field'] == 'DEEP'
         finally:
             os.unlink(sources_file)
             if os.path.exists(output_file.name):
