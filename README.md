@@ -153,6 +153,27 @@ euclidkit query-spectra \
     --verbose
 ```
 
+### Building Cutana Input
+
+```bash
+# Build Cutana CSV from a source table with object_id or ra/dec columns
+euclidkit query-cutana \
+    --sources my_sources.fits \
+    --output cutana_input.csv \
+    --instrument VIS \
+    --cutout-size pixel \
+    --cutout-size-value 50
+
+# NISP example with explicit filters
+euclidkit query-cutana \
+    --sources my_sources.fits \
+    --output cutana_input_nisp.csv \
+    --instrument NISP \
+    --nisp-filters NIR_Y,NIR_H \
+    --cutout-size arcsec \
+    --cutout-size-value 15
+```
+
 ### Compiling Spectra
 
 ```bash

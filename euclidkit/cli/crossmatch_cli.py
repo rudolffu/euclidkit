@@ -157,6 +157,8 @@ def query_spectra(crossmatch: Optional[str], output: str,
     
     This command queries the environment-specific spectra_source table to find available
     spectra for objects identified in crossmatching or provided as a list.
+
+    Credits: Kristin Anett Remmelgas and Héctor Cánovas Cabrera.
     
     If --combine-output is provided, automatically combines the found spectra
     into a single FITS file after querying, similar to cell 23 in the 
@@ -245,6 +247,77 @@ def query_spectra(crossmatch: Optional[str], output: str,
     finally:
         if archive is not None:
             archive.logout()
+
+
+@click.command(name='query-cutana')
+@click.option('--sources', '-s', required=True, type=click.Path(exists=True),
+              help='Input table with object_id or RA/Dec columns')
+@click.option('--output', '-o', required=True, type=click.Path(),
+              help='Output CSV file path for Cutana input')
+@click.option('--instrument', type=click.Choice(['VIS', 'NISP']), default='VIS',
+              show_default=True, help='Instrument used for mosaic selection')
+@click.option('--nisp-filters', type=str,
+              help='Comma-separated NISP filters (e.g. NIR_Y,NIR_H)')
+@click.option('--cutout-size', type=click.Choice(['pixel', 'arcsec']), default='pixel',
+              show_default=True, help='Diameter unit for Cutana file')
+@click.option('--cutout-size-value', type=float, default=50.0, show_default=True,
+              help='Constant diameter value for all sources')
+@click.option('--drop-noncutana-cols/--keep-noncutana-cols', default=True, show_default=True,
+              help='Drop or keep non-Cutana columns from the input table')
+@click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
+              default='PDR', help='Archive environment (default: PDR)')
+@click.option('--credentials', '-c', type=click.Path(exists=True),
+              help='Credentials file path')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optional[str],
+                 cutout_size: str, cutout_size_value: float, drop_noncutana_cols: bool,
+                 environment: str, credentials: Optional[str], verbose: bool):
+    """
+    Generate a Cutana input catalogue from a source table.
+
+    The input table can contain either Euclid ``object_id`` values or source
+    coordinates (``ra``/``dec`` or ``right_ascension``/``declination``).
+    """
+    import logging
+    from euclidkit.core.cutouts import CutoutGenerator
+    from euclidkit.utils.io import load_table
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    generator = CutoutGenerator(environment=environment)
+    archive = generator.archive
+
+    try:
+        if credentials:
+            archive.login(credentials_file=credentials)
+        else:
+            archive.login()
+
+        input_table = load_table(sources)
+        filters = None
+        if nisp_filters:
+            filters = [f.strip() for f in nisp_filters.split(',') if f.strip()]
+            if instrument != 'NISP':
+                raise ValueError("--nisp-filters requires --instrument NISP")
+
+        result_df = generator.generate_cutana_input(
+            sources=input_table,
+            output_file=output,
+            instrument_name=instrument,
+            nisp_filters=filters,
+            cutout_size=cutout_size,
+            cutout_size_value=cutout_size_value,
+            drop_noncutana_cols=drop_noncutana_cols,
+        )
+
+        click.echo(f"Cutana query completed: {len(result_df)} sources with mosaic matches")
+        click.echo(f"Cutana input file saved to: {output}")
+    except Exception as e:
+        click.echo(f"Error generating Cutana input: {e}", err=True)
+        sys.exit(1)
+    finally:
+        archive.logout()
 
 
 @click.command(name='upload-table')
@@ -392,6 +465,7 @@ def crossmatch_commands():
 # Add commands to group
 crossmatch_commands.add_command(crossmatch, name='crossmatch')
 crossmatch_commands.add_command(query_spectra, name='query-spectra') 
+crossmatch_commands.add_command(query_cutana, name='query-cutana')
 crossmatch_commands.add_command(compile_spectra, name='compile-spectra')
 
 

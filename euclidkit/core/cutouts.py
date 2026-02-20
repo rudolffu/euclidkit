@@ -131,6 +131,132 @@ class CutoutGenerator:
         return self._generate_cutouts(
             df_with_files, output_location, cutout_size, product_type, **kwargs
         )
+
+    def generate_cutana_input(
+        self,
+        sources: Union[str, pd.DataFrame, Table, List[Dict], Dict],
+        output_file: Union[str, Path],
+        instrument_name: str = 'VIS',
+        nisp_filters: Optional[List[str]] = None,
+        cutout_size: str = 'pixel',
+        cutout_size_value: float = 50.0,
+        drop_noncutana_cols: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Generate a Cutana-compatible source catalogue from source coordinates.
+
+        Notes
+        -----
+        This workflow is adapted from the Bulk_mosaic_cutouts notebook by
+        Kristin Anett Remmelgas.
+
+        Parameters
+        ----------
+        sources : str, DataFrame, Table, List[Dict], or Dict
+            Source information with either ``object_id`` or RA/Dec columns.
+        output_file : str or Path
+            Output CSV path for the Cutana input file.
+        instrument_name : str, default 'VIS'
+            Instrument selection: 'VIS' or 'NISP'.
+        nisp_filters : List[str], optional
+            Optional subset of NISP filters when instrument is 'NISP'.
+        cutout_size : str, default 'pixel'
+            Cutana diameter unit, either 'pixel' or 'arcsec'.
+        cutout_size_value : float, default 50.0
+            Constant diameter value applied to each source.
+        drop_noncutana_cols : bool, default True
+            When False, keep additional user columns in output.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame written to ``output_file``.
+        """
+        unit = cutout_size.lower()
+        if unit not in {'pixel', 'arcsec'}:
+            raise ValueError("cutout_size must be either 'pixel' or 'arcsec'")
+        if instrument_name not in {'VIS', 'NISP'}:
+            raise ValueError("instrument_name must be 'VIS' or 'NISP'")
+        if instrument_name != 'NISP' and nisp_filters:
+            raise ValueError("nisp_filters can only be used with instrument_name='NISP'")
+
+        df_input = self._normalize_sources(sources)
+        if len(df_input) == 0:
+            raise ValueError("No sources found in input")
+
+        df_coords = self._resolve_coordinates(df_input)
+        if len(df_coords) == 0:
+            raise ValueError("Could not resolve source coordinates from input")
+
+        radec_colnames = self._get_radec_colnames(df_coords.columns.tolist())
+        ra_col = radec_colnames['ra_colname']
+        dec_col = radec_colnames['dec_colname']
+
+        df_files = self._get_files_mosaic(
+            df_coords,
+            instrument_name=instrument_name,
+            nisp_filters=nisp_filters,
+            radec_colnames=radec_colnames,
+        )
+        if len(df_files) == 0:
+            raise ValueError("No mosaic files matched the provided sources")
+
+        df_files = df_files.copy()
+        df_files['fits_file_paths'] = (
+            df_files['datalabs_path'].astype(str).str.rstrip('/')
+            + '/'
+            + df_files['file_name'].astype(str)
+        )
+
+        # Build a stable source identifier for Cutana rows.
+        if 'object_id' in df_files.columns:
+            source_ids = df_files['object_id'].astype(str)
+            df_files['SourceID'] = 'OBJ_' + source_ids.str.replace(r'\.0$', '', regex=True)
+        else:
+            df_files['SourceID'] = (
+                'SRC_'
+                + df_files[ra_col].astype(str).str.replace('.', '', regex=False)
+                + '_'
+                + df_files[dec_col].astype(str).str.replace('.', '', regex=False)
+            )
+
+        group_cols = ['SourceID', ra_col, dec_col]
+        if 'object_id' in df_files.columns:
+            group_cols.append('object_id')
+
+        df_cutana = (
+            df_files[group_cols + ['fits_file_paths']]
+            .groupby(group_cols, as_index=False)['fits_file_paths']
+            .agg(lambda values: str(sorted(set(values))))
+        )
+
+        df_cutana.insert(
+            loc=3,
+            column=f'diameter_{unit}',
+            value=float(cutout_size_value),
+        )
+
+        if not drop_noncutana_cols:
+            keep_cols = [c for c in df_coords.columns if c not in df_cutana.columns]
+            if keep_cols:
+                df_cutana = df_cutana.merge(
+                    df_coords[[ra_col, dec_col] + keep_cols].drop_duplicates(),
+                    on=[ra_col, dec_col],
+                    how='left',
+                )
+
+        df_cutana = df_cutana.rename(columns={ra_col: 'RA', dec_col: 'Dec'})
+
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df_cutana.to_csv(output_path, index=False)
+
+        logger.info(
+            "Created Cutana input with %d sources at %s",
+            len(df_cutana),
+            output_path,
+        )
+        return df_cutana
     
     def _normalize_sources(self, sources) -> pd.DataFrame:
         """Convert various source input formats to standardized DataFrame."""

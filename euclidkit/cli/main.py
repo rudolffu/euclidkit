@@ -12,7 +12,13 @@ from typing import Optional
 
 from euclidkit.version import __version__
 from euclidkit.config import generate_config_template
-from euclidkit.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
+from euclidkit.cli.crossmatch_cli import (
+    crossmatch,
+    query_spectra,
+    query_cutana,
+    compile_spectra,
+    upload_table,
+)
 from euclidkit.cli.cutout_cli import cutouts
 from euclidkit.cli.footprint_cli import select_footprint
 
@@ -116,6 +122,7 @@ def pipeline(config_file: str, **kwargs):
 # Add commands to main CLI
 main.add_command(crossmatch)
 main.add_command(query_spectra, name='query-spectra')  
+main.add_command(query_cutana, name='query-cutana')
 main.add_command(compile_spectra, name='compile-spectra')
 main.add_command(upload_table)
 main.add_command(cutouts)
