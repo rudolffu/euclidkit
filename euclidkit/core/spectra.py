@@ -5,9 +5,13 @@ Provides functionality for loading, processing, and combining spectral data.
 """
 
 import os
+import io
+import zipfile
 import logging
+import tempfile
 from pathlib import Path
-from typing import Union, Optional, List, Dict, Any, TYPE_CHECKING
+from collections import defaultdict
+from typing import Union, Optional, List, Dict, Any, TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from astropy.io.fits.hdu.base import ExtensionHDU
@@ -22,9 +26,96 @@ from euclidkit.utils.io import ensure_dir
 
 logger = logging.getLogger(__name__)
 
+try:
+    import fitsio  # type: ignore
+except Exception:  # pragma: no cover
+    fitsio = None
+
 
 class SpectrumLoader:
     """Loader for individual Euclid spectra."""
+
+    @staticmethod
+    def _as_hdu(data: np.ndarray) -> 'ExtensionHDU':
+        """Convert a numpy payload to an Astropy extension HDU."""
+        if getattr(data, 'dtype', None) is not None and data.dtype.names:
+            return fits.BinTableHDU(data=data)
+        return fits.ImageHDU(data=data)
+
+    def load_spectra_batch(self, file_path: str, hdu_indices: Iterable[int]) -> Dict[int, 'ExtensionHDU']:
+        """
+        Load multiple HDUs from a single FITS file with one open call.
+
+        Uses fitsio when available for faster random extension reads, with
+        astropy fallback for compatibility.
+        """
+        unique_indices = sorted({int(idx) for idx in hdu_indices})
+        loaded: Dict[int, 'ExtensionHDU'] = {}
+
+        if not unique_indices:
+            return loaded
+
+        if fitsio is not None:
+            try:
+                with fitsio.FITS(file_path, 'r') as ff:  # type: ignore[attr-defined]
+                    n_hdus = len(ff)
+                    for idx in unique_indices:
+                        if idx < 0 or idx >= n_hdus:
+                            raise ValueError(f"HDU index {idx} out of range for {file_path}")
+                        data = ff[idx].read()
+                        loaded[idx] = self._as_hdu(data)
+                return loaded
+            except Exception as e:
+                logger.warning("fitsio batch read failed for %s: %s; falling back to astropy", file_path, e)
+
+        with fits.open(file_path, memmap=True, lazy_load_hdus=True, do_not_scale_image_data=True) as hdul:
+            n_hdus = len(hdul)
+            for idx in unique_indices:
+                if idx < 0 or idx >= n_hdus:
+                    raise ValueError(f"HDU index {idx} out of range for {file_path}")
+                loaded[idx] = hdul[idx].copy()
+        return loaded
+
+    def load_spectrum_from_datalink(
+        self,
+        euclid_client: Any,
+        source_id: Union[str, int],
+        schema: str = 'sedm',
+        retrieval_type: str = 'SPECTRA_RGS',
+    ) -> 'ExtensionHDU':
+        """
+        Retrieve a spectrum via Euclid datalink without extracting per-source files.
+
+        This bypasses ``get_spectrum`` directory checks by using ``load_data`` and
+        reading the returned zip in-memory.
+        """
+        params_dict = {
+            'ID': f"{schema} {source_id}",
+            'SCHEMA': schema,
+            'RETRIEVAL_TYPE': str(retrieval_type),
+            'USE_ZIP_ALWAYS': 'true',
+            'TAPCLIENT': 'ASTROQUERY',
+        }
+
+        with tempfile.NamedTemporaryFile(suffix='.fits.zip', delete=False) as tmp_file:
+            tmp_name = tmp_file.name
+
+        try:
+            euclid_client.load_data(params_dict=params_dict, output_file=tmp_name, verbose=False)
+            with zipfile.ZipFile(tmp_name, 'r') as zf:
+                fits_members = [n for n in zf.namelist() if n.lower().endswith('.fits')]
+                if not fits_members:
+                    raise ValueError(f"No FITS member found in datalink payload for source_id={source_id}")
+
+                member_name = fits_members[0]
+                payload = zf.read(member_name)
+                with fits.open(io.BytesIO(payload), memmap=False, lazy_load_hdus=True, do_not_scale_image_data=True) as hdul:
+                    if len(hdul) > 1:
+                        return hdul[1].copy()
+                    return hdul[0].copy()
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
     
     def load_spectrum(self, file_path: str, hdu_index: int = 1) -> 'ExtensionHDU':
         """
@@ -43,15 +134,7 @@ class SpectrumLoader:
             Spectrum HDU
         """
         try:
-            with fits.open(file_path) as hdul:
-                if hdu_index >= len(hdul):
-                    raise ValueError(f"HDU index {hdu_index} out of range for {file_path}")
-                
-                # Create a copy to avoid issues with closed file
-                spectrum_hdu = hdul[hdu_index].copy()
-                
-            return spectrum_hdu
-            
+            return self.load_spectra_batch(file_path, [hdu_index])[int(hdu_index)]
         except Exception as e:
             logger.error(f"Failed to load spectrum from {file_path}[{hdu_index}]: {e}")
             raise
@@ -168,43 +251,54 @@ class SpectrumCompiler:
             
             hdul_new = fits.HDUList([primary_hdu])
             
-            # Add each spectrum as an extension
+            # Group rows by source FITS path so each file is opened once.
+            grouped_rows: Dict[str, List[Any]] = defaultdict(list)
             chunk_failed = 0
-            for j, source in enumerate(tqdm(chunk, desc=f"Chunk {chunk_number}")):
-                try:
-                    # Construct file path
-                    file_path = self.loader.verify_spectrum_path(
-                        source[datalabs_path_col], 
-                        source[file_name_col]
-                    )
-                    
-                    if file_path is None:
-                        chunk_failed += 1
-                        continue
-                    
-                    # Load spectrum
-                    spectrum_hdu = self.loader.load_spectrum(
-                        file_path, 
-                        source[hdu_index_col]
-                    )
-                    
-                    # Set extension name to source ID
-                    spectrum_hdu.name = str(source[source_id_col])
-                    
-                    # Add metadata to header
-                    spectrum_hdu.header['SOURCE_ID'] = source[source_id_col]
-                    
-                    if 'ra_obj' in source.colnames:
-                        spectrum_hdu.header['RA'] = source['ra_obj']
-                    if 'dec_obj' in source.colnames:
-                        spectrum_hdu.header['DEC'] = source['dec_obj']
-
-                    hdul_new.append(spectrum_hdu)
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to add spectrum {source[source_id_col]}: {e}")
+            grouped_count = 0
+            for source in chunk:
+                file_path = self.loader.verify_spectrum_path(
+                    source[datalabs_path_col],
+                    source[file_name_col],
+                )
+                if file_path is None:
                     chunk_failed += 1
                     continue
+                grouped_rows[file_path].append(source)
+                grouped_count += 1
+
+            progress = tqdm(total=grouped_count, desc=f"Chunk {chunk_number}")
+            for file_path, sources_in_file in grouped_rows.items():
+                try:
+                    hdu_indices = [int(src[hdu_index_col]) for src in sources_in_file]
+                    spectra_by_index = self.loader.load_spectra_batch(file_path, hdu_indices)
+                except Exception as e:
+                    logger.warning("Failed to load grouped spectra from %s: %s", file_path, e)
+                    chunk_failed += len(sources_in_file)
+                    progress.update(len(sources_in_file))
+                    continue
+
+                for source in sources_in_file:
+                    try:
+                        spectrum_hdu = spectra_by_index[int(source[hdu_index_col])]
+
+                        # Set extension name to source ID
+                        spectrum_hdu.name = str(source[source_id_col])
+
+                        # Add metadata to header
+                        spectrum_hdu.header['SOURCE_ID'] = source[source_id_col]
+
+                        if 'ra_obj' in source.colnames:
+                            spectrum_hdu.header['RA'] = source['ra_obj']
+                        if 'dec_obj' in source.colnames:
+                            spectrum_hdu.header['DEC'] = source['dec_obj']
+
+                        hdul_new.append(spectrum_hdu)
+                    except Exception as e:
+                        logger.warning(f"Failed to add spectrum {source[source_id_col]}: {e}")
+                        chunk_failed += 1
+                    finally:
+                        progress.update(1)
+            progress.close()
             
             # Write chunk file
             try:
@@ -358,6 +452,83 @@ class SpectrumCompiler:
         finally:
             # Restore original max_extensions
             self.max_extensions = original_max
+
+    def compile_spectra_datalink(
+        self,
+        spectra_table: Table,
+        euclid_client: Any,
+        output_dir: Union[str, Path],
+        output_prefix: str = "compiled_spectra",
+        source_id_col: str = 'source_id',
+        retrieval_type: str = 'SPECTRA_RGS',
+        schema: str = 'sedm',
+        overwrite: bool = True,
+    ) -> List[str]:
+        """Compile spectra by retrieving each source via Euclid datalink."""
+        output_dir = Path(output_dir)
+        ensure_dir(output_dir)
+
+        if source_id_col not in spectra_table.colnames:
+            raise ValueError(f"Missing required column: {source_id_col}")
+
+        output_files = []
+        chunk_number = 1
+        failed_count = 0
+
+        for i in range(0, len(spectra_table), self.max_extensions):
+            chunk = spectra_table[i:i + self.max_extensions]
+            output_file = output_dir / f"{output_prefix}_chunk_{chunk_number:03d}.fits"
+            output_files.append(str(output_file))
+
+            primary_hdu = fits.PrimaryHDU()
+            primary_hdu.header['COMMENT'] = f'Compiled Euclid spectra (datalink) - Chunk {chunk_number}'
+            primary_hdu.header['NSPECTRA'] = len(chunk)
+            primary_hdu.header['CREATOR'] = 'euclidkit.core.spectra.SpectrumCompiler'
+            hdul_new = fits.HDUList([primary_hdu])
+
+            cache: Dict[str, 'ExtensionHDU'] = {}
+            chunk_failed = 0
+            for source in tqdm(chunk, desc=f"Chunk {chunk_number}"):
+                sid = str(source[source_id_col])
+                try:
+                    if sid not in cache:
+                        cache[sid] = self.loader.load_spectrum_from_datalink(
+                            euclid_client=euclid_client,
+                            source_id=sid,
+                            schema=schema,
+                            retrieval_type=retrieval_type,
+                        )
+                    spectrum_hdu = cache[sid].copy()
+                    spectrum_hdu.name = sid
+                    spectrum_hdu.header['SOURCE_ID'] = sid
+
+                    if 'ra_obj' in source.colnames:
+                        spectrum_hdu.header['RA'] = source['ra_obj']
+                    if 'dec_obj' in source.colnames:
+                        spectrum_hdu.header['DEC'] = source['dec_obj']
+
+                    hdul_new.append(spectrum_hdu)
+                except Exception as e:
+                    logger.warning("Failed to add datalink spectrum %s: %s", sid, e)
+                    chunk_failed += 1
+
+            try:
+                hdul_new.writeto(output_file, overwrite=overwrite)
+                if chunk_failed > 0:
+                    failed_count += chunk_failed
+            except Exception as e:
+                logger.error(f"Failed to write chunk {chunk_number}: {e}")
+                if output_file.exists():
+                    output_file.unlink()
+                output_files.pop()
+            finally:
+                hdul_new.close()
+
+            chunk_number += 1
+
+        if failed_count > 0:
+            logger.warning(f"Total failed spectra (datalink): {failed_count}")
+        return output_files
 
 
 class SpectrumProcessor:

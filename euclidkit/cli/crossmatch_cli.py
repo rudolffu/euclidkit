@@ -398,9 +398,22 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Maximum extensions per file (default: 5000)')
 @click.option('--overwrite', is_flag=True,
               help='Overwrite existing output files')
+@click.option('--use-datalink', is_flag=True,
+              help='Retrieve spectra via Euclid datalink instead of local datalabs_path/file_name')
+@click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
+              default='PDR', help='Archive environment for datalink mode (default: PDR)')
+@click.option('--credentials', '-c', type=click.Path(exists=True),
+              help='Credentials file path for datalink mode')
+@click.option('--retrieval-type', type=click.Choice(['ALL', 'SPECTRA_BGS', 'SPECTRA_RGS']),
+              default='SPECTRA_RGS', show_default=True,
+              help='Datalink retrieval type (used with --use-datalink)')
+@click.option('--schema', type=str, default='sedm', show_default=True,
+              help='Datalink schema value (used with --use-datalink)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
-                   max_extensions: int, overwrite: bool, verbose: bool):
+                   max_extensions: int, overwrite: bool, use_datalink: bool,
+                   environment: str, credentials: Optional[str], retrieval_type: str,
+                   schema: str, verbose: bool):
     """
     Compile individual spectra into chunked multi-extension FITS files.
     
@@ -411,10 +424,12 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
     import logging
     from euclidkit.core.spectra import SpectrumCompiler
     from euclidkit.utils.io import load_table
+    from euclidkit.core.data_access import EuclidArchive
 
     if verbose:
         logging.basicConfig(level=logging.INFO)
     
+    archive = None
     try:
         # Load spectral sources table
         sources = load_table(spectra_table)
@@ -429,12 +444,28 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
             click.echo(f"Output directory: {output_dir}")
         
         # Compile spectra
-        output_files = compiler.compile_spectra(
-            spectra_table=sources,
-            output_dir=output_dir,
-            output_prefix=prefix,
-            overwrite=overwrite
-        )
+        if use_datalink:
+            archive = EuclidArchive(environment=environment)
+            if credentials:
+                archive.login(credentials_file=credentials)
+            else:
+                archive.login()
+            output_files = compiler.compile_spectra_datalink(
+                spectra_table=sources,
+                euclid_client=archive.euclid,
+                output_dir=output_dir,
+                output_prefix=prefix,
+                retrieval_type=retrieval_type,
+                schema=schema,
+                overwrite=overwrite,
+            )
+        else:
+            output_files = compiler.compile_spectra(
+                spectra_table=sources,
+                output_dir=output_dir,
+                output_prefix=prefix,
+                overwrite=overwrite
+            )
         
         # Create metadata table
         metadata_file = compiler.create_metadata_table(
@@ -457,6 +488,9 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
     except Exception as e:
         click.echo(f"Error compiling spectra: {e}", err=True)
         sys.exit(1)
+    finally:
+        if archive is not None:
+            archive.logout()
 
 
 # Main command group for crossmatching functionality

@@ -638,6 +638,7 @@ class TestCompileSpectraCLI:
         finally:
             os.unlink(spectra_file)
 
+
     def test_compile_spectra_multiple_files(self):
         """Test compile-spectra creating multiple output files."""
         spectra_file = self.create_temp_spectra_file()
