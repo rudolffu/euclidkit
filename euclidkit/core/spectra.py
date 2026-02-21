@@ -97,12 +97,26 @@ class SpectrumLoader:
             'TAPCLIENT': 'ASTROQUERY',
         }
 
-        with tempfile.NamedTemporaryFile(suffix='.fits.zip', delete=False) as tmp_file:
-            tmp_name = tmp_file.name
+        def _download_with_available_clients(output_file: str) -> None:
+            """
+            Use astroquery's private data client path first.
 
-        try:
-            euclid_client.load_data(params_dict=params_dict, output_file=tmp_name, verbose=False)
-            with zipfile.ZipFile(tmp_name, 'r') as zf:
+            This mirrors get_spectrum internals more closely than calling the
+            public EuclidClass.load_data wrapper.
+            """
+            private_client = getattr(euclid_client, '_EuclidClass__eucliddata', None)
+            if private_client is not None:
+                private_client.load_data(params_dict=params_dict, output_file=output_file, verbose=False)
+                return
+
+            logger.warning(
+                "Private __eucliddata client unavailable for source_id=%s; falling back to public load_data",
+                source_id
+            )
+            euclid_client.load_data(params_dict=params_dict, output_file=output_file, verbose=False)
+
+        def _read_zip_spectrum(zip_path: str) -> 'ExtensionHDU':
+            with zipfile.ZipFile(zip_path, 'r') as zf:
                 fits_members = [n for n in zf.namelist() if n.lower().endswith('.fits')]
                 if not fits_members:
                     raise ValueError(f"No FITS member found in datalink payload for source_id={source_id}")
@@ -113,6 +127,24 @@ class SpectrumLoader:
                     if len(hdul) > 1:
                         return hdul[1].copy()
                     return hdul[0].copy()
+
+        with tempfile.NamedTemporaryFile(suffix='.fits.zip', delete=False) as tmp_file:
+            tmp_name = tmp_file.name
+
+        try:
+            _download_with_available_clients(tmp_name)
+            # Some server-side 500s can still leave empty files; validate and retry once.
+            if (not os.path.exists(tmp_name)) or os.path.getsize(tmp_name) == 0:
+                private_client = getattr(euclid_client, '_EuclidClass__eucliddata', None)
+                if private_client is not None:
+                    logger.warning(
+                        "Empty datalink payload for source_id=%s; retrying with private __eucliddata",
+                        source_id
+                    )
+                    private_client.load_data(params_dict=params_dict, output_file=tmp_name, verbose=False)
+                else:
+                    euclid_client.load_data(params_dict=params_dict, output_file=tmp_name, verbose=False)
+            return _read_zip_spectrum(tmp_name)
         finally:
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
@@ -285,7 +317,7 @@ class SpectrumCompiler:
                         spectrum_hdu.name = str(source[source_id_col])
 
                         # Add metadata to header
-                        spectrum_hdu.header['SOURCE_ID'] = source[source_id_col]
+                        spectrum_hdu.header['SOURC_ID'] = source[source_id_col]
 
                         if 'ra_obj' in source.colnames:
                             spectrum_hdu.header['RA'] = source['ra_obj']
@@ -357,23 +389,24 @@ class SpectrumCompiler:
         # Create extended metadata table
         metadata = spectra_table.copy()
         
-        # Add chunk information
-        chunk_info = []
+        # Add chunk information; keep FITS-safe scalar types (no object dtype).
+        chunk_numbers: List[int] = []
+        chunk_files: List[str] = []
+        extension_numbers: List[int] = []
         for i, source in enumerate(spectra_table):
             chunk_num = (i // self.max_extensions) + 1
             extension_num = (i % self.max_extensions) + 1  # +1 for primary HDU
             chunk_file = output_files[chunk_num - 1] if chunk_num <= len(output_files) else None
-            
-            chunk_info.append({
-                'chunk_number': chunk_num,
-                'chunk_file': Path(chunk_file).name if chunk_file else None,
-                'extension_number': extension_num
-            })
-        
-        # Add new columns
-        metadata['chunk_number'] = [info['chunk_number'] for info in chunk_info]
-        metadata['chunk_file'] = [info['chunk_file'] for info in chunk_info]
-        metadata['extension_number'] = [info['extension_number'] for info in chunk_info]
+
+            chunk_numbers.append(int(chunk_num))
+            # Empty string keeps a homogeneous string column when a chunk is missing.
+            chunk_files.append(Path(chunk_file).name if chunk_file else "")
+            extension_numbers.append(int(extension_num))
+
+        # Add new columns with explicit FITS-friendly dtypes.
+        metadata['chunk_number'] = np.asarray(chunk_numbers, dtype=np.int32)
+        metadata['chunk_file'] = np.asarray(chunk_files, dtype='U256')
+        metadata['extension_number'] = np.asarray(extension_numbers, dtype=np.int32)
         
         # Save metadata
         metadata.write(output_path, format='fits', overwrite=True)
@@ -500,7 +533,7 @@ class SpectrumCompiler:
                         )
                     spectrum_hdu = cache[sid].copy()
                     spectrum_hdu.name = sid
-                    spectrum_hdu.header['SOURCE_ID'] = sid
+                    spectrum_hdu.header['SOURC_ID'] = sid
 
                     if 'ra_obj' in source.colnames:
                         spectrum_hdu.header['RA'] = source['ra_obj']

@@ -409,11 +409,13 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Datalink retrieval type (used with --use-datalink)')
 @click.option('--schema', type=str, default='sedm', show_default=True,
               help='Datalink schema value (used with --use-datalink)')
+@click.option('--limit', type=int, default=None,
+              help='Process only the first N rows from spectra table (useful for quick tests)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
                    max_extensions: int, overwrite: bool, use_datalink: bool,
                    environment: str, credentials: Optional[str], retrieval_type: str,
-                   schema: str, verbose: bool):
+                   schema: str, limit: Optional[int], verbose: bool):
     """
     Compile individual spectra into chunked multi-extension FITS files.
     
@@ -426,13 +428,60 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
     from euclidkit.utils.io import load_table
     from euclidkit.core.data_access import EuclidArchive
 
+    def _next_available_dir(base_dir: Path) -> Path:
+        """Return first available sibling directory with _N suffix."""
+        idx = 1
+        while True:
+            candidate = Path(f"{base_dir}_{idx}")
+            if not candidate.exists():
+                return candidate
+            idx += 1
+
     if verbose:
         logging.basicConfig(level=logging.INFO)
     
     archive = None
     try:
+        target_output_dir = Path(output_dir)
+        if target_output_dir.exists() and target_output_dir.is_dir():
+            has_existing_content = any(target_output_dir.iterdir())
+            if has_existing_content:
+                if overwrite:
+                    confirmed = click.confirm(
+                        f"Output directory '{target_output_dir}' is not empty. Overwrite existing files?",
+                        default=False
+                    )
+                    if not confirmed:
+                        target_output_dir = _next_available_dir(target_output_dir)
+                        click.echo(f"Using new output directory: {target_output_dir}")
+                        overwrite = False
+                else:
+                    confirmed = click.confirm(
+                        f"Output directory '{target_output_dir}' is not empty. Overwrite existing files?",
+                        default=False
+                    )
+                    if confirmed:
+                        overwrite = True
+                    else:
+                        target_output_dir = _next_available_dir(target_output_dir)
+                        click.echo(f"Using new output directory: {target_output_dir}")
+        elif target_output_dir.exists() and target_output_dir.is_file():
+            replacement_dir = _next_available_dir(target_output_dir)
+            click.echo(
+                f"Requested output path '{target_output_dir}' is a file. "
+                f"Using directory: {replacement_dir}"
+            )
+            target_output_dir = replacement_dir
+            overwrite = False
+
+        output_dir = str(target_output_dir)
+
         # Load spectral sources table
         sources = load_table(spectra_table)
+        if limit is not None:
+            if limit <= 0:
+                raise ValueError("--limit must be a positive integer")
+            sources = sources[:limit]
         if verbose:
             click.echo(f"Loaded {len(sources)} spectral sources from {spectra_table}")
         
