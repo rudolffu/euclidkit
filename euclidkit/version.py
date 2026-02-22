@@ -2,7 +2,7 @@
 
 import re
 
-__version__ = "0.2.0rc.2"
+__version__ = "0.2.0rc.3"
 
 # Extract numeric release tuple from PEP 440 versions (e.g. 0.2.0rc1 -> (0, 2, 0)).
 _release_match = re.match(r"^(\d+)\.(\d+)\.(\d+)", __version__)

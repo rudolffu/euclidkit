@@ -8,11 +8,9 @@ A comprehensive Python package for Euclid archival data analysis, designed for u
 
 - **Data Access**: Query and crossmatch sources with the Euclid MER catalogue
 - **Spectroscopic Analysis**: Access, download, and combine NISP spectra of archival sources
-- **Template Generation**: Run redshift determination workflows and generate composite spectra
-- **Multi-Survey Integration**: Interface with DESI, SDSS, and other survey data
 - **Unified Workflow**: Streamlined tools for researchers working with Euclid spectroscopic data
 
-The package integrates with other specialized tools (`specbox` and `qsofitmore`) to provide a complete analysis pipeline.
+The package is designed for efficient archive querying and Euclid spectrum compilation workflows.
 
 ## Installation
 
@@ -34,13 +32,6 @@ pip install euclidkit
 git clone https://github.com/rudolffu/euclidkit.git
 cd euclidkit
 pip install -e .
-```
-
-### Optional Dependencies
-
-For DESI integration:
-```bash
-pip install euclidkit[desi]
 ```
 
 ## Quick Start
@@ -204,8 +195,6 @@ euclidkit compile-spectra \
 
 ### Analysis Pipeline
 
-- **Template Generation**: Tools for creating composite spectra and templates
-- **Redshift Analysis**: Cross-correlation redshift determination
 - **Quality Control**: Spectrum validation and quality assessment
 
 ## Data Environment
@@ -357,35 +346,7 @@ Check your installation and environment:
 euclidkit diagnostics
 
 # Check specific components
-euclidkit diagnostics --check-deps --check-data --check-desi
-```
-
-## Integration with Other Tools
-
-### DESI Spectra Access
-
-```python
-# Access DESI spectra in SDSS-compatible format
-from euclidkit.external.desi import get_desi_spectra
-
-desi_spectra = get_desi_spectra(
-    ra=150.0, dec=12.5, 
-    dr='DESI-DR1',
-    output_format='sdss'
-)
-```
-
-### Template Generation
-
-```python
-from euclidkit.analysis.templates import TemplateGenerator
-
-generator = TemplateGenerator()
-template = generator.create_composite_template(
-    spectra_list=['spec1.fits', 'spec2.fits', 'spec3.fits'],
-    redshift_range=(2.0, 4.0),
-    output_file='qso_template.fits'
-)
+euclidkit diagnostics --check-deps --check-data
 ```
 
 ## Archive Environments
@@ -431,7 +392,6 @@ This project is licensed under the GNU General Public License - see the [LICENSE
 - ESA Euclid Mission and Consortium
 - ESA Datalabs infrastructure team
 - Astropy and astroquery communities
-- DESI Collaboration for SPARCL integration
 
 ## Changelog
 
