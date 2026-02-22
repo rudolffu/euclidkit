@@ -9,6 +9,7 @@ import io
 import zipfile
 import logging
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from collections import defaultdict
 from typing import Union, Optional, List, Dict, Any, TYPE_CHECKING, Iterable
@@ -210,6 +211,98 @@ class SpectrumCompiler:
         """
         self.max_extensions = max_extensions
         self.loader = SpectrumLoader()
+
+    def _compile_single_chunk_local(
+        self,
+        chunk_number: int,
+        chunk: Table,
+        output_file: Path,
+        source_id_col: str,
+        datalabs_path_col: str,
+        file_name_col: str,
+        hdu_index_col: str,
+        overwrite: bool,
+        show_progress: bool,
+    ) -> Dict[str, Any]:
+        """Compile one local-files chunk and return chunk stats."""
+        if output_file.exists() and not overwrite:
+            logger.info(f"Skipping existing chunk (resume mode): {output_file.name}")
+            return {'ok': True, 'failed': 0, 'file': str(output_file), 'skipped': True}
+
+        logger.info(f"Creating chunk {chunk_number}: {len(chunk)} spectra -> {output_file.name}")
+
+        primary_hdu = fits.PrimaryHDU()
+        primary_hdu.header['COMMENT'] = f'Compiled Euclid spectra - Chunk {chunk_number}'
+        primary_hdu.header['NSPECTRA'] = len(chunk)
+        primary_hdu.header['CREATOR'] = 'euclidkit.core.spectra.SpectrumCompiler'
+        hdul_new = fits.HDUList([primary_hdu])
+
+        grouped_rows: Dict[str, List[Any]] = defaultdict(list)
+        chunk_failed = 0
+        grouped_count = 0
+        for source in chunk:
+            file_path = self.loader.verify_spectrum_path(
+                source[datalabs_path_col],
+                source[file_name_col],
+            )
+            if file_path is None:
+                chunk_failed += 1
+                continue
+            grouped_rows[file_path].append(source)
+            grouped_count += 1
+
+        logger.info(
+            "Chunk %d grouping active: %d spectra mapped to %d unique FITS source files",
+            chunk_number, grouped_count, len(grouped_rows)
+        )
+
+        progress = tqdm(total=grouped_count, desc=f"Chunk {chunk_number}") if show_progress else None
+        for file_path, sources_in_file in grouped_rows.items():
+            try:
+                hdu_indices = [int(src[hdu_index_col]) for src in sources_in_file]
+                spectra_by_index = self.loader.load_spectra_batch(file_path, hdu_indices)
+            except Exception as e:
+                logger.warning("Failed to load grouped spectra from %s: %s", file_path, e)
+                chunk_failed += len(sources_in_file)
+                if progress is not None:
+                    progress.update(len(sources_in_file))
+                continue
+
+            for source in sources_in_file:
+                try:
+                    spectrum_hdu = spectra_by_index[int(source[hdu_index_col])]
+                    spectrum_hdu.name = str(source[source_id_col])
+                    spectrum_hdu.header['SOURC_ID'] = source[source_id_col]
+
+                    if 'ra_obj' in source.colnames:
+                        spectrum_hdu.header['RA'] = source['ra_obj']
+                    if 'dec_obj' in source.colnames:
+                        spectrum_hdu.header['DEC'] = source['dec_obj']
+
+                    hdul_new.append(spectrum_hdu)
+                except Exception as e:
+                    logger.warning(f"Failed to add spectrum {source[source_id_col]}: {e}")
+                    chunk_failed += 1
+                finally:
+                    if progress is not None:
+                        progress.update(1)
+
+        if progress is not None:
+            progress.close()
+
+        try:
+            hdul_new.writeto(output_file, overwrite=overwrite)
+            logger.info(f"Wrote {len(hdul_new) - 1} spectra to {output_file.name}")
+            if chunk_failed > 0:
+                logger.warning(f"Failed to include {chunk_failed} spectra in chunk {chunk_number}")
+            return {'ok': True, 'failed': chunk_failed, 'file': str(output_file), 'skipped': False}
+        except Exception as e:
+            logger.error(f"Failed to write chunk {chunk_number}: {e}")
+            if output_file.exists():
+                output_file.unlink()
+            return {'ok': False, 'failed': chunk_failed, 'file': str(output_file), 'skipped': False}
+        finally:
+            hdul_new.close()
     
     def compile_spectra(
         self,
@@ -220,7 +313,8 @@ class SpectrumCompiler:
         datalabs_path_col: str = 'datalabs_path',
         file_name_col: str = 'file_name', 
         hdu_index_col: str = 'hdu_index',
-        overwrite: bool = True
+        overwrite: bool = True,
+        workers: int = 1,
     ) -> List[str]:
         """
         Compile spectra into chunked FITS files.
@@ -242,7 +336,10 @@ class SpectrumCompiler:
         hdu_index_col : str, default 'hdu_index'
             Column name for HDU indices
         overwrite : bool, default True
-            Whether to overwrite existing files
+            Whether to overwrite existing files. If False, existing chunk
+            files are kept and skipped (resume mode).
+        workers : int, default 1
+            Number of chunk workers. Each worker handles different chunks.
             
         Returns
         -------
@@ -260,97 +357,73 @@ class SpectrumCompiler:
         
         logger.info(f"Compiling {len(spectra_table)} spectra into FITS files")
         logger.info(f"Max extensions per file: {self.max_extensions}")
+        if workers < 1:
+            raise ValueError("workers must be >= 1")
         
         output_files = []
-        chunk_number = 1
         failed_count = 0
-        
-        # Process spectra in chunks
+
+        chunk_specs = []
+        chunk_number = 1
         for i in range(0, len(spectra_table), self.max_extensions):
             chunk = spectra_table[i:i + self.max_extensions]
-            
-            # Create output file for this chunk
             output_file = output_dir / f"{output_prefix}_chunk_{chunk_number:03d}.fits"
-            output_files.append(str(output_file))
-            
-            logger.info(f"Creating chunk {chunk_number}: {len(chunk)} spectra -> {output_file.name}")
-            
-            # Create primary HDU
-            primary_hdu = fits.PrimaryHDU()
-            primary_hdu.header['COMMENT'] = f'Compiled Euclid spectra - Chunk {chunk_number}'
-            primary_hdu.header['NSPECTRA'] = len(chunk)
-            primary_hdu.header['CREATOR'] = 'euclidkit.core.spectra.SpectrumCompiler'
-            
-            hdul_new = fits.HDUList([primary_hdu])
-            
-            # Group rows by source FITS path so each file is opened once.
-            grouped_rows: Dict[str, List[Any]] = defaultdict(list)
-            chunk_failed = 0
-            grouped_count = 0
-            for source in chunk:
-                file_path = self.loader.verify_spectrum_path(
-                    source[datalabs_path_col],
-                    source[file_name_col],
-                )
-                if file_path is None:
-                    chunk_failed += 1
-                    continue
-                grouped_rows[file_path].append(source)
-                grouped_count += 1
-
-            progress = tqdm(total=grouped_count, desc=f"Chunk {chunk_number}")
-            for file_path, sources_in_file in grouped_rows.items():
-                try:
-                    hdu_indices = [int(src[hdu_index_col]) for src in sources_in_file]
-                    spectra_by_index = self.loader.load_spectra_batch(file_path, hdu_indices)
-                except Exception as e:
-                    logger.warning("Failed to load grouped spectra from %s: %s", file_path, e)
-                    chunk_failed += len(sources_in_file)
-                    progress.update(len(sources_in_file))
-                    continue
-
-                for source in sources_in_file:
-                    try:
-                        spectrum_hdu = spectra_by_index[int(source[hdu_index_col])]
-
-                        # Set extension name to source ID
-                        spectrum_hdu.name = str(source[source_id_col])
-
-                        # Add metadata to header
-                        spectrum_hdu.header['SOURC_ID'] = source[source_id_col]
-
-                        if 'ra_obj' in source.colnames:
-                            spectrum_hdu.header['RA'] = source['ra_obj']
-                        if 'dec_obj' in source.colnames:
-                            spectrum_hdu.header['DEC'] = source['dec_obj']
-
-                        hdul_new.append(spectrum_hdu)
-                    except Exception as e:
-                        logger.warning(f"Failed to add spectrum {source[source_id_col]}: {e}")
-                        chunk_failed += 1
-                    finally:
-                        progress.update(1)
-            progress.close()
-            
-            # Write chunk file
-            try:
-                hdul_new.writeto(output_file, overwrite=overwrite)
-                logger.info(f"Wrote {len(hdul_new) - 1} spectra to {output_file.name}")
-                
-                if chunk_failed > 0:
-                    logger.warning(f"Failed to include {chunk_failed} spectra in chunk {chunk_number}")
-                    failed_count += chunk_failed
-                
-            except Exception as e:
-                logger.error(f"Failed to write chunk {chunk_number}: {e}")
-                if output_file.exists():
-                    output_file.unlink()
-                output_files.pop()  # Remove failed file from list
-            
-            finally:
-                hdul_new.close()
-            
+            chunk_specs.append((chunk_number, chunk, output_file))
             chunk_number += 1
+
+        if workers == 1:
+            for cnum, chunk, output_file in chunk_specs:
+                result = self._compile_single_chunk_local(
+                    chunk_number=cnum,
+                    chunk=chunk,
+                    output_file=output_file,
+                    source_id_col=source_id_col,
+                    datalabs_path_col=datalabs_path_col,
+                    file_name_col=file_name_col,
+                    hdu_index_col=hdu_index_col,
+                    overwrite=overwrite,
+                    show_progress=True,
+                )
+                failed_count += int(result['failed'])
+                if result['ok']:
+                    output_files.append(result['file'])
+        else:
+            logger.info("Processing %d chunks with %d workers", len(chunk_specs), workers)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_chunk = {
+                    executor.submit(
+                        self._compile_single_chunk_local,
+                        chunk_number=cnum,
+                        chunk=chunk,
+                        output_file=output_file,
+                        source_id_col=source_id_col,
+                        datalabs_path_col=datalabs_path_col,
+                        file_name_col=file_name_col,
+                        hdu_index_col=hdu_index_col,
+                        overwrite=overwrite,
+                        show_progress=False,
+                    ): cnum
+                    for cnum, chunk, output_file in chunk_specs
+                }
+
+                progress = tqdm(total=len(chunk_specs), desc="Chunks")
+                results_by_chunk: Dict[int, Dict[str, Any]] = {}
+                for future in as_completed(future_to_chunk):
+                    cnum = future_to_chunk[future]
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        logger.error("Chunk %d failed with exception: %s", cnum, e)
+                        result = {'ok': False, 'failed': 0, 'file': '', 'skipped': False}
+                    results_by_chunk[cnum] = result
+                    failed_count += int(result['failed'])
+                    progress.update(1)
+                progress.close()
+
+            for cnum, _, _ in chunk_specs:
+                result = results_by_chunk.get(cnum, {'ok': False, 'file': ''})
+                if result.get('ok'):
+                    output_files.append(result['file'])
         
         logger.info(f"Compilation complete: {len(output_files)} files created")
         if failed_count > 0:
@@ -497,7 +570,12 @@ class SpectrumCompiler:
         schema: str = 'sedm',
         overwrite: bool = True,
     ) -> List[str]:
-        """Compile spectra by retrieving each source via Euclid datalink."""
+        """
+        Compile spectra by retrieving each source via Euclid datalink.
+
+        If ``overwrite`` is False, existing chunk files are kept and skipped
+        (resume mode).
+        """
         output_dir = Path(output_dir)
         ensure_dir(output_dir)
 
@@ -512,6 +590,11 @@ class SpectrumCompiler:
             chunk = spectra_table[i:i + self.max_extensions]
             output_file = output_dir / f"{output_prefix}_chunk_{chunk_number:03d}.fits"
             output_files.append(str(output_file))
+
+            if output_file.exists() and not overwrite:
+                logger.info(f"Skipping existing chunk (resume mode): {output_file.name}")
+                chunk_number += 1
+                continue
 
             primary_hdu = fits.PrimaryHDU()
             primary_hdu.header['COMMENT'] = f'Compiled Euclid spectra (datalink) - Chunk {chunk_number}'
