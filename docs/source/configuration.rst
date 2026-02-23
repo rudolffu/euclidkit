@@ -14,8 +14,8 @@ Create a private credentials file and lock file permissions:
 
 Edit ``~/.euclidkit/.cred.txt`` manually and store:
 
-1. COSMOS username
-2. COSMOS password
+The first line: COSMOS username
+The second line: COSMOS password
 
 User config file
 ----------------
