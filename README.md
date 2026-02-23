@@ -1,6 +1,7 @@
 # euclidkit
 
 [![PyPI version](https://img.shields.io/pypi/v/euclidkit.svg)](https://pypi.org/project/euclidkit/)
+[![Read the Docs](https://img.shields.io/readthedocs/euclidkit?label=docs)](https://euclidkit.readthedocs.io/en/latest/index.html)
 
 A comprehensive Python package for Euclid archival data analysis, designed for use within the ESA Datalabs environment.
 
@@ -374,6 +375,7 @@ euclidkit diagnostics --check-deps --check-data
 ## Documentation
 
 For detailed documentation and examples, visit:
+- [euclidkit docs](https://euclidkit.readthedocs.io/en/latest/index.html)
 - [Package Documentation](https://github.com/rudolffu/euclidkit/docs)
 - [Euclid Science Archive](https://s2e2.cosmos.esa.int/www/euclid_iscience/Public_User_Guide.html)
 - [astroquery.esa.euclid](https://astroquery.readthedocs.io/en/latest/esa/euclid/euclid.html)
