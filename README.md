@@ -1,5 +1,7 @@
 # euclidkit
 
+[![PyPI version](https://img.shields.io/pypi/v/euclidkit.svg)](https://pypi.org/project/euclidkit/)
+
 A comprehensive Python package for Euclid archival data analysis, designed for use within the ESA Datalabs environment.
 
 ## Overview
@@ -193,6 +195,8 @@ euclidkit compile-spectra \
     --max-extensions 1000 \
     --verbose
 ```
+
+Note: for canonical compilation from local Datalabs FITS volumes, `--workers 2` is often not faster due to shared-storage I/O contention. Prefer `--workers 1` unless benchmarking on your setup shows a clear gain.
 
 ## Key Features
 
