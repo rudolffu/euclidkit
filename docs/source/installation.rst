@@ -1,0 +1,34 @@
+Installation
+============
+
+Requirements
+------------
+
+- Python 3.11+
+- Access to ESA Datalabs volumes for canonical spectra workflows
+- COSMOS credentials for Euclid archive access
+
+Install from PyPI
+-----------------
+
+.. code-block:: bash
+
+   pip install euclidkit
+
+Development install
+-------------------
+
+.. code-block:: bash
+
+   git clone https://github.com/rudolffu/euclidkit.git
+   cd euclidkit
+   pip install -e .
+
+CLI check
+---------
+
+.. code-block:: bash
+
+   euclidkit --help
+   euclidkit --version
+
