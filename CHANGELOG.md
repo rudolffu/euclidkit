@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.0rc.4] - 2026-02-23
+
+### Changed
+- Resume logic for canonical spectra compilation now inspects existing chunk FITS files and skips rows based on actual compiled extension counts.
+- Resume now supports differing historical chunk sizes by continuing from already-compiled row count rather than assuming the current chunk size.
+- Metadata generation now maps chunk/extension assignments from real output files, improving correctness for mixed-size resume cases.
+
 ## [0.2.0rc.3] - 2026-02-22
 
 ### Changed
@@ -49,7 +56,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Removed legacy distance-based matching fields and unnecessary `DISTANCE(...)` projections in cutout query paths.
 - Corrected join strategy to use object-ID joins against MER catalog where applicable.
 
-[Unreleased]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.3...HEAD
+[Unreleased]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.4...HEAD
+[0.2.0rc.4]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.3...v0.2.0rc.4
 [0.2.0rc.3]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.2...v0.2.0rc.3
 [0.2.0rc.2]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.1...v0.2.0rc.2
 [0.2.0rc.1]: https://github.com/rudolffu/euclidkit/releases/tag/v0.2.0rc.1

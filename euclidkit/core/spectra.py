@@ -6,6 +6,7 @@ Provides functionality for loading, processing, and combining spectral data.
 
 import os
 import io
+import re
 import zipfile
 import logging
 import tempfile
@@ -303,6 +304,63 @@ class SpectrumCompiler:
             return {'ok': False, 'failed': chunk_failed, 'file': str(output_file), 'skipped': False}
         finally:
             hdul_new.close()
+
+    @staticmethod
+    def _parse_chunk_number(file_name: str, output_prefix: str) -> Optional[int]:
+        """Extract chunk number from '<prefix>_chunk_NNN.fits' file names."""
+        pattern = rf"^{re.escape(output_prefix)}_chunk_(\d+)\.fits$"
+        match = re.match(pattern, file_name)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    @staticmethod
+    def _count_chunk_extensions(file_path: Union[str, Path]) -> int:
+        """Count spectra extensions in a compiled chunk FITS file."""
+        with fits.open(file_path, memmap=True, lazy_load_hdus=True) as hdul:
+            return max(0, len(hdul) - 1)
+
+    def _discover_existing_chunks(
+        self,
+        output_dir: Path,
+        output_prefix: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Discover contiguous existing chunk files (starting from chunk 1).
+
+        Returns a list of dictionaries with keys:
+        - chunk_number
+        - file
+        - nspectra
+        """
+        discovered: List[Dict[str, Any]] = []
+        all_chunk_files: List[tuple[int, Path]] = []
+
+        for file_path in output_dir.glob(f"{output_prefix}_chunk_*.fits"):
+            chunk_num = self._parse_chunk_number(file_path.name, output_prefix)
+            if chunk_num is None:
+                continue
+            all_chunk_files.append((chunk_num, file_path))
+
+        all_chunk_files.sort(key=lambda x: x[0])
+        expected = 1
+        for chunk_num, file_path in all_chunk_files:
+            if chunk_num != expected:
+                break
+            try:
+                nspectra = self._count_chunk_extensions(file_path)
+            except Exception as e:
+                logger.warning("Could not inspect existing chunk %s: %s", file_path.name, e)
+                break
+
+            discovered.append({
+                'chunk_number': chunk_num,
+                'file': str(file_path),
+                'nspectra': int(nspectra),
+            })
+            expected += 1
+
+        return discovered
     
     def compile_spectra(
         self,
@@ -360,16 +418,42 @@ class SpectrumCompiler:
         if workers < 1:
             raise ValueError("workers must be >= 1")
         
-        output_files = []
+        output_files: List[str] = []
         failed_count = 0
+        resume_rows = 0
+        next_chunk_number = 1
+
+        if not overwrite:
+            existing_chunks = self._discover_existing_chunks(output_dir, output_prefix)
+            if existing_chunks:
+                output_files.extend([c['file'] for c in existing_chunks])
+                resume_rows = int(sum(c['nspectra'] for c in existing_chunks))
+                next_chunk_number = int(existing_chunks[-1]['chunk_number']) + 1
+
+                existing_chunk_sizes = [c['nspectra'] for c in existing_chunks if c['nspectra'] > 0]
+                if len(existing_chunk_sizes) > 1:
+                    reference_size = existing_chunk_sizes[0]
+                    if reference_size != self.max_extensions:
+                        logger.info(
+                            "Existing chunk size (%d) differs from current max_extensions (%d); "
+                            "resume will skip %d already compiled rows and continue.",
+                            reference_size, self.max_extensions, resume_rows
+                        )
+
+                logger.info(
+                    "Resume mode: found %d existing contiguous chunk files with %d compiled spectra",
+                    len(existing_chunks), resume_rows
+                )
 
         chunk_specs = []
-        chunk_number = 1
-        for i in range(0, len(spectra_table), self.max_extensions):
-            chunk = spectra_table[i:i + self.max_extensions]
-            output_file = output_dir / f"{output_prefix}_chunk_{chunk_number:03d}.fits"
-            chunk_specs.append((chunk_number, chunk, output_file))
-            chunk_number += 1
+        if resume_rows < len(spectra_table):
+            remaining_table = spectra_table[resume_rows:]
+            chunk_number = next_chunk_number
+            for i in range(0, len(remaining_table), self.max_extensions):
+                chunk = remaining_table[i:i + self.max_extensions]
+                output_file = output_dir / f"{output_prefix}_chunk_{chunk_number:03d}.fits"
+                chunk_specs.append((chunk_number, chunk, output_file))
+                chunk_number += 1
 
         if workers == 1:
             for cnum, chunk, output_file in chunk_specs:
@@ -387,7 +471,7 @@ class SpectrumCompiler:
                 failed_count += int(result['failed'])
                 if result['ok']:
                     output_files.append(result['file'])
-        else:
+        elif chunk_specs:
             logger.info("Processing %d chunks with %d workers", len(chunk_specs), workers)
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_chunk = {
@@ -462,19 +546,30 @@ class SpectrumCompiler:
         # Create extended metadata table
         metadata = spectra_table.copy()
         
-        # Add chunk information; keep FITS-safe scalar types (no object dtype).
-        chunk_numbers: List[int] = []
-        chunk_files: List[str] = []
-        extension_numbers: List[int] = []
-        for i, source in enumerate(spectra_table):
-            chunk_num = (i // self.max_extensions) + 1
-            extension_num = (i % self.max_extensions) + 1  # +1 for primary HDU
-            chunk_file = output_files[chunk_num - 1] if chunk_num <= len(output_files) else None
+        # Add chunk information by scanning output files in sequence. This
+        # supports resume scenarios where older chunk sizes differ.
+        chunk_numbers: List[int] = [0] * len(metadata)
+        chunk_files: List[str] = [""] * len(metadata)
+        extension_numbers: List[int] = [0] * len(metadata)
 
-            chunk_numbers.append(int(chunk_num))
-            # Empty string keeps a homogeneous string column when a chunk is missing.
-            chunk_files.append(Path(chunk_file).name if chunk_file else "")
-            extension_numbers.append(int(extension_num))
+        row_cursor = 0
+        for order_idx, chunk_file in enumerate(output_files, start=1):
+            file_name = Path(chunk_file).name
+            parsed_chunk_number = self._parse_chunk_number(file_name, file_name.split("_chunk_")[0] if "_chunk_" in file_name else "")
+            chunk_number = int(parsed_chunk_number) if parsed_chunk_number is not None else int(order_idx)
+            try:
+                nspectra = self._count_chunk_extensions(chunk_file)
+            except Exception as e:
+                logger.warning("Could not inspect output chunk %s for metadata: %s", file_name, e)
+                nspectra = 0
+
+            for ext_idx in range(nspectra):
+                if row_cursor >= len(metadata):
+                    break
+                chunk_numbers[row_cursor] = chunk_number
+                chunk_files[row_cursor] = file_name
+                extension_numbers[row_cursor] = ext_idx + 1
+                row_cursor += 1
 
         # Add new columns with explicit FITS-friendly dtypes.
         metadata['chunk_number'] = np.asarray(chunk_numbers, dtype=np.int32)
