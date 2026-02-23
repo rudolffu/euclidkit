@@ -200,13 +200,13 @@ class SpectrumLoader:
 class SpectrumCompiler:
     """Compiler for creating multi-extension FITS files from individual spectra."""
     
-    def __init__(self, max_extensions: int = 5000):
+    def __init__(self, max_extensions: int = 1000):
         """
         Initialize spectrum compiler.
         
         Parameters
         ----------
-        max_extensions : int, default 5000
+        max_extensions : int, default 1000
             Maximum number of extensions per output file
         """
         self.max_extensions = max_extensions

@@ -26,7 +26,7 @@ class EuclidKitConfig:
         return {
             # Data access settings
             'data': {
-                'credentials_file': '/media/user/cred.txt',
+                'credentials_file': str(Path.home() / '.euclidkit' / '.cred.txt'),
                 'cache_dir': str(Path.home() / '.euclidkit' / 'cache'),
             },
             # Analysis settings

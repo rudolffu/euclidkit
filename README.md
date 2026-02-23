@@ -16,7 +16,7 @@ The package is designed for efficient archive querying and Euclid spectrum compi
 
 ### Requirements
 
-- Python 3.9+
+- Python 3.11+
 - Access to ESA Datalabs environment (for data volumes)
 - COSMOS credentials for Euclid archive access
 
@@ -38,18 +38,33 @@ pip install -e .
 
 ### Setup Credentials
 
-Create a credentials file in your workspace:
+Store credentials in a private file under your home directory and restrict permissions:
 ```bash
-# Create /media/user/cred.txt with your COSMOS credentials
-echo "your_username" > /media/user/cred.txt
-echo "your_password" >> /media/user/cred.txt
+mkdir -p ~/.euclidkit
+touch ~/.euclidkit/.cred.txt
+chmod 600 ~/.euclidkit/.cred.txt
 ```
+
+Edit `~/.euclidkit/.cred.txt` manually with your preferred editor (do not put credentials in shell history).
+
+Use two lines:
+1. COSMOS username
+2. COSMOS password
 
 ### Configuration
 
-Generate a configuration file:
+Create and edit the user config file:
 ```bash
-euclidkit init-config --output my_config.yaml --template basic
+euclidkit init-config --output ~/.euclidkit/euclidkit_config.yaml --template basic
+```
+
+Then edit `~/.euclidkit/euclidkit_config.yaml` and set the credential path.
+
+Set the credential path in the config:
+
+```yaml
+data:
+  credentials_file: /home/<user>/.euclidkit/.cred.txt
 ```
 
 ### Basic Usage
@@ -175,7 +190,7 @@ euclidkit compile-spectra \
     --spectra-table spectra_sources.fits \
     --output-dir ./output \
     --prefix compiled_spectra \
-    --max-extensions 5000 \
+    --max-extensions 1000 \
     --verbose
 ```
 
@@ -204,16 +219,6 @@ euclidkit compile-spectra \
 This package is optimized for the ESA Datalabs environment with direct access to:
 
 - **Euclid Q1 Data**: `/data/euclid_q1/` (35 TB volume)
-- **Euclid ERO Data**: `/data/euc_ero_data_01/` (600 GB volume)
-
-### File Naming Conventions
-
-The package handles standard Euclid data products:
-
-- **VIS Images**: `EUC_VIS_*_TILE*.fits`
-- **NIR Images**: `EUC_NIR_*_{Y,J,H}_*.fits`
-- **MER Mosaics**: `EUC_MER_BGSUB-MOSAIC-{VIS,NIR-Y,NIR-J,NIR-H}_TILE*.fits`
-- **Spectra**: `EUC_SIR_W-COMBSPEC_*.fits`
 
 ## API Reference
 
@@ -225,7 +230,7 @@ Main interface to the Euclid science archive.
 
 ```python
 archive = EuclidArchive(environment='PDR')
-archive.login(credentials_file='/media/user/cred.txt')
+archive.login(credentials_file='~/.euclidkit/.cred.txt')
 
 # Crossmatch sources
 results = archive.crossmatch_sources(
@@ -262,7 +267,7 @@ Advanced spectrum compilation with chunking support.
 ```python
 from euclidkit.core.spectra import SpectrumCompiler
 
-compiler = SpectrumCompiler(max_extensions=5000)
+compiler = SpectrumCompiler(max_extensions=1000)
 
 # Compile into chunked files
 output_files = compiler.compile_spectra(
@@ -351,10 +356,8 @@ euclidkit diagnostics --check-deps --check-data
 
 ## Archive Environments
 
-- **PDR**: Public Data Release (`catalogue.mer_catalogue`)
-- **IDR**: Internal Data Release (`catalogue.mer_catalogue`)  
-- **OTF**: On-the-fly processing (`catalogue.mer_catalogue`)
-- **REG**: Regression testing (`catalogue.mer_final_catalog_fits_file_regreproc1_r2`)
+- **PDR**: Public Data Release 
+- **IDR**: Internal Data Release (only accessible to Euclid Consortium members)
 
 ## Contributing
 
@@ -389,8 +392,8 @@ This project is licensed under the GNU General Public License - see the [LICENSE
 
 ## Acknowledgments
 
-- ESA Euclid Mission and Consortium
-- ESA Datalabs infrastructure team
+- ESA Euclid Mission and Euclid Consortium
+- ESA Datalabs and Euclid Data Space infrastructure team
 - Astropy and astroquery communities
 
 ## Changelog

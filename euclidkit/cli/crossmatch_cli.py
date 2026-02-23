@@ -394,8 +394,8 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Output directory for compiled FITS files')
 @click.option('--prefix', type=str, default='compiled_spectra',
               help='Prefix for output files (default: compiled_spectra)')
-@click.option('--max-extensions', type=int, default=5000,
-              help='Maximum extensions per file (default: 5000)')
+@click.option('--max-extensions', type=int, default=1000,
+              help='Maximum extensions per file (default: 1000)')
 @click.option('--overwrite', is_flag=True,
               help='Overwrite existing output files')
 @click.option('--use-datalink', is_flag=True,
