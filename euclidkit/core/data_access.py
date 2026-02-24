@@ -258,7 +258,10 @@ class EuclidArchive:
             mer_table = self._get_mer_table_name(idr_field=idr_field)
         
         logger.info(f"Using MER table: {mer_table}")
-        logger.info(f"Crossmatching {len(user_data)} sources with radius {radius}\"")
+        if want_oid:
+            logger.info(f"Crossmatching {len(user_data)} sources in object-id mode")
+        else:
+            logger.info(f"Crossmatching {len(user_data)} sources with radius {radius} arcsec")
 
         # Decide matching mode
         user_cols = list(user_data.colnames)
@@ -318,9 +321,49 @@ class EuclidArchive:
                 idr_field=idr_field,
                 row_count=len(user_data),
             )
+            job = submission.get('job')
+            results_downloaded = False
+            result_row_count = None
+            download_error = None
 
-            self._write_job_info(job_info, output_file)
-            logger.info(f"Saved async job info to {output_file}")
+            # Try to fetch async results and write the requested output table.
+            if job is not None:
+                try:
+                    logger.info(
+                        "Attempting to download results for async job %s",
+                        getattr(job, 'jobid', None),
+                    )
+                    async_result = job.get_results()
+                    if async_result is not None:
+                        save_table(async_result, output_file)
+                        results_downloaded = True
+                        result_row_count = len(async_result)
+                        logger.info(
+                            "Downloaded async results (%d rows) to %s",
+                            result_row_count,
+                            output_file,
+                        )
+                except Exception as exc:
+                    download_error = str(exc)
+                    logger.warning(
+                        "Async job submitted but result download failed: %s",
+                        exc,
+                    )
+
+            job_info['results_downloaded'] = results_downloaded
+            job_info['result_row_count'] = result_row_count
+            job_info['download_error'] = download_error
+
+            if not results_downloaded:
+                output_path = Path(output_file)
+                if output_path.suffix.lower() == '.json':
+                    job_info_path = output_path
+                else:
+                    job_info_path = output_path.with_name(output_path.name + '.job.json')
+                self._write_job_info(job_info, job_info_path)
+                job_info['job_info_file'] = str(job_info_path)
+                logger.info(f"Saved async job info to {job_info_path}")
+
             return job_info
 
         crossmatch_results = []

@@ -66,8 +66,11 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
         if verbose:
             click.echo(f"Connected to {environment} environment")
             click.echo(f"Input table: {input}")
-            click.echo(f"Search radius: {radius} arcsec")
             click.echo(f"Match mode: {match_mode}")
+            if match_mode == 'object-id':
+                click.echo("Search radius: n/a (object-id mode)")
+            else:
+                click.echo(f"Search radius: {radius} arcsec")
             if max_sources:
                 click.echo(f"Processing max {max_sources} sources")
             if environment == 'IDR':
@@ -107,11 +110,21 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
         results = archive.crossmatch_sources(**crossmatch_kwargs)
         
         if full_async:
-            job_id = results.get('job_id')
-            click.echo("Crossmatch job submitted asynchronously.")
-            if job_id:
-                click.echo(f"Job ID: {job_id}")
-            click.echo(f"Job info saved to: {effective_output_path}")
+            if results.get('results_downloaded'):
+                click.echo("Crossmatch async query completed and results were downloaded.")
+                click.echo(f"Results saved to: {effective_output_path}")
+                if results.get('result_row_count') is not None:
+                    click.echo(f"Rows downloaded: {results['result_row_count']}")
+                job_id = results.get('job_id')
+                if job_id:
+                    click.echo(f"Job ID: {job_id}")
+            else:
+                job_id = results.get('job_id')
+                click.echo("Crossmatch job submitted asynchronously.")
+                if job_id:
+                    click.echo(f"Job ID: {job_id}")
+                job_info_file = results.get('job_info_file', str(effective_output_path))
+                click.echo(f"Job info saved to: {job_info_file}")
         else:
             # Report results
             click.echo(f"Crossmatch completed: {len(results)} matches found")
