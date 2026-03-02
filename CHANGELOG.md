@@ -7,6 +7,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-02
+
+### Added
+- `query-cutana` CLI command for generating Cutana input files from object IDs or coordinates.
+- Canonical spectra compilation support for chunk-level parallel workers via `compile-spectra --workers`.
+- Datalink spectra compilation mode with `compile-spectra --use-datalink`.
+- Sphinx + Read the Docs documentation scaffold and user guide pages.
+
+### Changed
+- Default spectra chunk size changed to `1000` extensions per output FITS.
+- Spectra compilation now resumes by default and can continue correctly across previous runs with different chunk sizes.
+- Crossmatch now includes `point_like_prob` and `extended_prob` in outputs.
+- Credential setup guidance updated to use secure user-local files under `~/.euclidkit`.
+- Project license updated to BSD 3-Clause for public release/distribution.
+
+### Fixed
+- Crossmatch async mode now attempts result download and writes table output when available.
+- Crossmatch object-id mode logging now reports mode-specific messaging (no radius confusion).
+- Metadata table generation in spectra compilation fixed for mixed chunk/resume scenarios.
+
 ## [0.2.0rc.4] - 2026-02-23
 
 ### Changed
@@ -56,7 +76,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Removed legacy distance-based matching fields and unnecessary `DISTANCE(...)` projections in cutout query paths.
 - Corrected join strategy to use object-ID joins against MER catalog where applicable.
 
-[Unreleased]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.4...HEAD
+[Unreleased]: https://github.com/rudolffu/euclidkit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.4...v0.2.0
 [0.2.0rc.4]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.3...v0.2.0rc.4
 [0.2.0rc.3]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.2...v0.2.0rc.3
 [0.2.0rc.2]: https://github.com/rudolffu/euclidkit/compare/v0.2.0rc.1...v0.2.0rc.2
