@@ -2,7 +2,7 @@ Spectra Compilation
 ===================
 
 Canonical mode (local FITS paths on Datalabs)
-----------------------------------
+---------------------------------------------
 
 Canonical compilation reads source FITS files from ``datalabs_path`` + ``file_name``
 columns and copies selected ``hdu_index`` rows into chunked outputs. This requires 
@@ -30,7 +30,7 @@ During resume, euclidkit:
 4. Continues with remaining rows, even if previous runs used a different chunk size.
 
 Parallel workers (not recommended on Datalabs)
-----------------
+----------------------------------------------
 
 Use ``--workers`` for chunk-level parallelism in canonical mode:
 
@@ -64,4 +64,3 @@ Notes:
 
 - ``--workers`` currently applies to canonical mode only.
 - For quick tests, use ``--limit N``.
-

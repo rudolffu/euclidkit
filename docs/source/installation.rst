@@ -32,3 +32,8 @@ CLI check
    euclidkit --help
    euclidkit --version
 
+License
+-------
+
+euclidkit is distributed under the BSD 3-Clause License. See the
+repository ``LICENSE`` file for the full text.

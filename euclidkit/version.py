@@ -14,5 +14,5 @@ else:
 # Version metadata
 __author__ = "Yuming Fu"
 __email__ = "fuympku@outlook.com"
-__license__ = "GPLv3"
+__license__ = "BSD-3-Clause"
 __copyright__ = "Copyright 2026, Yuming Fu"

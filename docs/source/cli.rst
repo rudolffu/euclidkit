@@ -20,6 +20,14 @@ Use ``--help`` on any command for full options:
 
    euclidkit query-spectra --help
 
+Environment options
+-------------------
+
+Commands that access the Euclid archive support:
+
+- ``--environment``: ``PDR``, ``IDR``, ``OTF``, ``REG``
+- ``--idr-field`` (IDR-only commands): ``WIDE`` or ``DEEP``
+
 crossmatch
 ----------
 
@@ -92,4 +100,3 @@ Example:
    euclidkit upload-table \
      --input my_sources.fits \
      --table-name my_sources_work
-

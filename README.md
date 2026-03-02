@@ -361,8 +361,36 @@ euclidkit diagnostics --check-deps --check-data
 
 ## Archive Environments
 
-- **PDR**: Public Data Release 
-- **IDR**: Internal Data Release (only accessible to Euclid Consortium members)
+Use ``--environment`` (CLI) or ``environment=...`` (Python API) to select the
+archive backend:
+
+- **PDR**: Public Data Release archive.
+- **IDR**: Internal Data Release archive (consortium access).
+- **OTF**: On-the-fly archive environment.
+- **REG**: Regression/testing archive environment.
+
+For **IDR**, you can also select the field with ``--idr-field``:
+
+- **WIDE**: Uses the IDR WIDE MER catalogue.
+- **DEEP**: Uses the IDR DEEP MER catalogue.
+
+Examples:
+
+```bash
+# IDR WIDE (default IDR field)
+euclidkit crossmatch \
+  --input my_sources.fits \
+  --output xmatch_wide.fits \
+  --environment IDR \
+  --idr-field WIDE
+
+# IDR DEEP
+euclidkit crossmatch \
+  --input my_sources.fits \
+  --output xmatch_deep.fits \
+  --environment IDR \
+  --idr-field DEEP
+```
 
 ## Contributing
 
@@ -394,7 +422,7 @@ For detailed documentation and examples, visit:
 
 ## License
 
-This project is licensed under the GNU General Public License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 

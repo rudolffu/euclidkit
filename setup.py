@@ -128,7 +128,7 @@ if __name__ == "__main__":
             "Development Status :: 4 - Beta",
             "Intended Audience :: Science/Research",
             "Topic :: Scientific/Engineering :: Astronomy",
-            "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+            "License :: OSI Approved :: BSD License",
             "Programming Language :: Python :: 3",
             "Programming Language :: Python :: 3.9",
             "Programming Language :: Python :: 3.10",

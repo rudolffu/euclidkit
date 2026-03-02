@@ -21,6 +21,7 @@ Contents
 
    installation
    configuration
+   environments
    quickstart
    cli
    spectra_compilation
