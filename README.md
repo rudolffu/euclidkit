@@ -165,6 +165,8 @@ euclidkit upload-table \
 euclidkit query-spectra \
     --crossmatch crossmatch_results.fits \
     --output spectra_sources.fits \
+    --environment IDR \
+    --idr-field WIDE \
     --verbose
 
 # Query spectra by object IDs and auto-combine

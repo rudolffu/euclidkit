@@ -813,13 +813,25 @@ class EuclidArchive:
         }
         return mapping.get(suffix.lower(), 'votable')
 
-    def _get_spectra_source_table_name(self) -> str:
+    def _get_spectra_source_table_name(self, idr_field: Optional[str] = None) -> str:
         """Get spectra source table name for current environment."""
+        if self.environment == 'IDR':
+            field = (idr_field or 'WIDE').upper()
+            valid_fields = {'WIDE', 'DEEP'}
+            if field not in valid_fields:
+                raise ValueError(
+                    f"Invalid IDR field '{idr_field}'. Expected one of {sorted(valid_fields)}"
+                )
+            return (
+                'catalogue.spectra_source_wide'
+                if field == 'WIDE'
+                else 'catalogue.spectra_source_deep'
+            )
+
         prefix_by_env = {
             'PDR': 'q1',
             'OTF': 'q1',
             'REG': 'dr1',
-            'IDR': 'dr1',
         }
         prefix = prefix_by_env.get(self.environment, 'q1')
         return f"{prefix}.spectra_source"
@@ -1084,7 +1096,7 @@ class EuclidArchive:
         with open(output_path, 'w', encoding='utf-8') as fh:
             json.dump(job_info, fh, indent=2)
     
-    def _query_spectra_batch(self, batch: Table) -> Table:
+    def _query_spectra_batch(self, batch: Table, idr_field: Optional[str] = None) -> Table:
         """Query spectra for a batch of object IDs."""
         
         # Upload user table to archive for querying
@@ -1095,7 +1107,7 @@ class EuclidArchive:
         try:
             # Use temporary upload with launch_job
             upload_name = f"user_spectra_batch_{np.random.randint(10000, 99999)}"
-            spectra_source_table = self._get_spectra_source_table_name()
+            spectra_source_table = self._get_spectra_source_table_name(idr_field=idr_field)
             
             # Construct spectra query
             query = f"""
@@ -1132,7 +1144,8 @@ class EuclidArchive:
     def query_spectra_sources(
         self,
         crossmatch_table: Optional[Table] = None,
-        output_file: Optional[Union[str, Path]] = None
+        output_file: Optional[Union[str, Path]] = None,
+        idr_field: Optional[str] = None,
     ) -> Table:
         """
         Query spectral sources from Euclid archive.
@@ -1143,6 +1156,9 @@ class EuclidArchive:
             Table with object_id column from crossmatch results
         output_file : str or Path, optional
             Output file path to save results
+        idr_field : {'WIDE', 'DEEP'}, optional
+            IDR field selector. Used only when environment='IDR'. Defaults to
+            'WIDE' if not provided.
             
         Returns
         -------
@@ -1178,7 +1194,7 @@ class EuclidArchive:
             batch = user_table[i:i+batch_size]
             logger.info(f"Querying batch {i//batch_size + 1}/{(len(user_table)-1)//batch_size + 1}")
             
-            batch_result = self._query_spectra_batch(batch)
+            batch_result = self._query_spectra_batch(batch, idr_field=idr_field)
             
             if len(batch_result) > 0:
                 all_results.append(batch_result)

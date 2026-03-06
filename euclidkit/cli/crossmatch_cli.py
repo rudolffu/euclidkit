@@ -188,12 +188,15 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
               help='Maximum number of spectra to include in combined output')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
+@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+              show_default=True,
+              help='IDR field selection (only used when --environment=IDR)')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def query_spectra(crossmatch: Optional[str], output: str,
                   combine_output: Optional[str], max_spectra: Optional[int],
-                  environment: str, credentials: Optional[str], verbose: bool):
+                  environment: str, idr_field: str, credentials: Optional[str], verbose: bool):
     """
     Query spectral sources for objects from crossmatch or object ID list.
     
@@ -232,6 +235,8 @@ def query_spectra(crossmatch: Optional[str], output: str,
         
         if verbose:
             click.echo(f"Connected to {environment} environment")
+            if environment == 'IDR':
+                click.echo(f"IDR field: {idr_field.upper()}")
         
         # Load crossmatch table
         crossmatch_table = load_table(crossmatch)
@@ -241,7 +246,8 @@ def query_spectra(crossmatch: Optional[str], output: str,
         # Query spectra
         results = archive.query_spectra_sources(
             crossmatch_table=crossmatch_table,
-            output_file=output
+            output_file=output,
+            idr_field=idr_field.upper() if environment == 'IDR' else None,
         )
         
         # Report results

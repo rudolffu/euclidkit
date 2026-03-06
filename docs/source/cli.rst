@@ -83,7 +83,8 @@ Example:
    euclidkit query-spectra \
      --crossmatch crossmatch_results.fits \
      --output spectra_sources.fits \
-     --environment IDR
+     --environment IDR \
+     --idr-field WIDE
 
 query-cutana
 ------------
