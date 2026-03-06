@@ -587,23 +587,69 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                 archive.login(credentials_file=credentials)
             else:
                 archive.login()
-            output_files = compiler.compile_spectra_datalink(
-                spectra_table=sources_for_datalink,
-                euclid_client=archive.euclid,
-                output_dir=output_dir,
-                output_prefix=prefix,
-                retrieval_type=retrieval_selected,
-                schema=schema,
-                overwrite=overwrite,
-            )
-            metadata_file = compiler.create_metadata_table(
-                spectra_table=sources_for_datalink,
-                output_files=output_files,
-                output_dir=output_dir,
-                output_name=f"{prefix}_metadata.fits"
-            )
-            metadata_files = [metadata_file]
-            total_processed = len(sources_for_datalink)
+            if lambda_selected == 'BOTH':
+                click.echo("Datalink BOTH mode: writing separate RGS and BGS compiled files.")
+                output_files = []
+                metadata_files = []
+
+                rgs_prefix = f"{prefix}_rgs"
+                rgs_files = compiler.compile_spectra_datalink(
+                    spectra_table=sources_for_datalink,
+                    euclid_client=archive.euclid,
+                    output_dir=output_dir,
+                    output_prefix=rgs_prefix,
+                    retrieval_type='SPECTRA_RGS',
+                    schema=schema,
+                    overwrite=overwrite,
+                )
+                output_files.extend(rgs_files)
+                metadata_files.append(
+                    compiler.create_metadata_table(
+                        spectra_table=sources_for_datalink,
+                        output_files=rgs_files,
+                        output_dir=output_dir,
+                        output_name=f"{rgs_prefix}_metadata.fits",
+                    )
+                )
+
+                bgs_prefix = f"{prefix}_bgs"
+                bgs_files = compiler.compile_spectra_datalink(
+                    spectra_table=sources_for_datalink,
+                    euclid_client=archive.euclid,
+                    output_dir=output_dir,
+                    output_prefix=bgs_prefix,
+                    retrieval_type='SPECTRA_BGS',
+                    schema=schema,
+                    overwrite=overwrite,
+                )
+                output_files.extend(bgs_files)
+                metadata_files.append(
+                    compiler.create_metadata_table(
+                        spectra_table=sources_for_datalink,
+                        output_files=bgs_files,
+                        output_dir=output_dir,
+                        output_name=f"{bgs_prefix}_metadata.fits",
+                    )
+                )
+                total_processed = len(sources_for_datalink) * 2
+            else:
+                output_files = compiler.compile_spectra_datalink(
+                    spectra_table=sources_for_datalink,
+                    euclid_client=archive.euclid,
+                    output_dir=output_dir,
+                    output_prefix=prefix,
+                    retrieval_type=retrieval_selected,
+                    schema=schema,
+                    overwrite=overwrite,
+                )
+                metadata_file = compiler.create_metadata_table(
+                    spectra_table=sources_for_datalink,
+                    output_files=output_files,
+                    output_dir=output_dir,
+                    output_name=f"{prefix}_metadata.fits"
+                )
+                metadata_files = [metadata_file]
+                total_processed = len(sources_for_datalink)
         else:
             selected_lambda = lambda_range.upper()
             is_idr_deep = environment == 'IDR' and idr_field.upper() == 'DEEP'

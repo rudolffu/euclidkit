@@ -892,31 +892,56 @@ class SpectrumCompiler:
             primary_hdu.header['CREATOR'] = 'euclidkit.core.spectra.SpectrumCompiler'
             hdul_new = fits.HDUList([primary_hdu])
 
-            cache: Dict[str, 'ExtensionHDU'] = {}
+            cache: Dict[tuple[str, str], 'ExtensionHDU'] = {}
             chunk_failed = 0
+            added_count = 0
+
+            retrieval_upper = str(retrieval_type).upper()
+            retrieval_sequence = (
+                ['SPECTRA_RGS', 'SPECTRA_BGS']
+                if retrieval_upper == 'ALL'
+                else [retrieval_upper]
+            )
+
             for source in tqdm(chunk, desc=f"Chunk {chunk_number}"):
                 sid = str(source[source_id_col])
-                try:
-                    if sid not in cache:
-                        cache[sid] = self.loader.load_spectrum_from_datalink(
-                            euclid_client=euclid_client,
-                            source_id=sid,
-                            schema=schema,
-                            retrieval_type=retrieval_type,
+                for retrieval_arm in retrieval_sequence:
+                    try:
+                        cache_key = (sid, retrieval_arm)
+                        if cache_key not in cache:
+                            cache[cache_key] = self.loader.load_spectrum_from_datalink(
+                                euclid_client=euclid_client,
+                                source_id=sid,
+                                schema=schema,
+                                retrieval_type=retrieval_arm,
+                            )
+                        spectrum_hdu = cache[cache_key].copy()
+                        if len(retrieval_sequence) > 1:
+                            arm_tag = 'RGS' if retrieval_arm == 'SPECTRA_RGS' else 'BGS'
+                            spectrum_hdu.name = f"{sid}_{arm_tag}"
+                        else:
+                            spectrum_hdu.name = sid
+                        spectrum_hdu.header['SOURC_ID'] = sid
+                        spectrum_hdu.header['LAMBRANG'] = 'RGS' if retrieval_arm == 'SPECTRA_RGS' else 'BGS'
+                        spectrum_hdu.header['RETRTYPE'] = retrieval_arm
+
+                        if 'ra_obj' in source.colnames:
+                            spectrum_hdu.header['RA'] = source['ra_obj']
+                        if 'dec_obj' in source.colnames:
+                            spectrum_hdu.header['DEC'] = source['dec_obj']
+
+                        hdul_new.append(spectrum_hdu)
+                        added_count += 1
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to add datalink spectrum %s (%s): %s",
+                            sid,
+                            retrieval_arm,
+                            e,
                         )
-                    spectrum_hdu = cache[sid].copy()
-                    spectrum_hdu.name = sid
-                    spectrum_hdu.header['SOURC_ID'] = sid
+                        chunk_failed += 1
 
-                    if 'ra_obj' in source.colnames:
-                        spectrum_hdu.header['RA'] = source['ra_obj']
-                    if 'dec_obj' in source.colnames:
-                        spectrum_hdu.header['DEC'] = source['dec_obj']
-
-                    hdul_new.append(spectrum_hdu)
-                except Exception as e:
-                    logger.warning("Failed to add datalink spectrum %s: %s", sid, e)
-                    chunk_failed += 1
+            primary_hdu.header['NSPECTRA'] = added_count
 
             try:
                 hdul_new.writeto(output_file, overwrite=overwrite)

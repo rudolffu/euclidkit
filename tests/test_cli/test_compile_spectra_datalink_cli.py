@@ -283,7 +283,7 @@ def test_compile_spectra_datalink_deduplicates_source_rows():
 
 
 def test_compile_spectra_datalink_lambda_range_maps_to_retrieval_type_all():
-    """In datalink mode, -L BOTH should map to retrieval_type=ALL."""
+    """In datalink mode, -L BOTH should compile separate RGS and BGS outputs."""
     runner = CliRunner()
     spectra_table = Table({
         'source_id': [100001, 100002],
@@ -298,8 +298,14 @@ def test_compile_spectra_datalink_lambda_range_maps_to_retrieval_type_all():
                 spectra_table,
                 {'input_rows': 2, 'unique_sources': 2, 'duplicate_rows_removed': 0},
             )
-            mock_compiler.compile_spectra_datalink.return_value = [f"{output_dir}/dl_compiled_chunk_001.fits"]
-            mock_compiler.create_metadata_table.return_value = f"{output_dir}/dl_compiled_metadata.fits"
+            mock_compiler.compile_spectra_datalink.side_effect = [
+                [f"{output_dir}/dl_compiled_rgs_chunk_001.fits"],
+                [f"{output_dir}/dl_compiled_bgs_chunk_001.fits"],
+            ]
+            mock_compiler.create_metadata_table.side_effect = [
+                f"{output_dir}/dl_compiled_rgs_metadata.fits",
+                f"{output_dir}/dl_compiled_bgs_metadata.fits",
+            ]
             mock_archive = Mock()
             mock_archive.euclid = Mock()
 
@@ -314,9 +320,12 @@ def test_compile_spectra_datalink_lambda_range_maps_to_retrieval_type_all():
                         ])
 
             assert result.exit_code == 0
-            kwargs = mock_compiler.compile_spectra_datalink.call_args.kwargs
-            assert kwargs['retrieval_type'] == 'ALL'
-            assert "lambda_range=BOTH, retrieval_type=ALL" in result.output
+            assert mock_compiler.compile_spectra_datalink.call_count == 2
+            kwargs_rgs = mock_compiler.compile_spectra_datalink.call_args_list[0].kwargs
+            kwargs_bgs = mock_compiler.compile_spectra_datalink.call_args_list[1].kwargs
+            assert kwargs_rgs['retrieval_type'] == 'SPECTRA_RGS'
+            assert kwargs_bgs['retrieval_type'] == 'SPECTRA_BGS'
+            assert "Datalink BOTH mode: writing separate RGS and BGS compiled files." in result.output
     finally:
         if os.path.exists(spectra_file):
             os.unlink(spectra_file)

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import numpy as np
+from astropy.io import fits
 from astropy.table import Table
 
 from euclidkit.core.spectra import SpectrumCompiler
@@ -90,3 +92,50 @@ def test_deduplicate_by_source_id_keeps_first_row_order():
     assert stats["input_rows"] == 5
     assert stats["unique_sources"] == 3
     assert stats["duplicate_rows_removed"] == 2
+
+
+def test_compile_spectra_datalink_all_fetches_both_arms(tmp_path):
+    compiler = SpectrumCompiler(max_extensions=1000)
+    table = Table(
+        {
+            "source_id": [101, 101, 102, 102],
+            "object_id": [101, 101, 102, 102],
+        }
+    )
+
+    # Minimal bintable HDU payload returned by loader for each call.
+    payload = np.array([(1.0, 2.0)], dtype=[("WAVELENGTH", "f4"), ("SIGNAL", "f4")])
+    hdu = fits.BinTableHDU(data=payload)
+
+    calls = []
+
+    def fake_load(*, euclid_client, source_id, schema, retrieval_type):
+        calls.append((str(source_id), retrieval_type))
+        return hdu.copy()
+
+    compiler.loader.load_spectrum_from_datalink = fake_load  # type: ignore[assignment]
+    out_files = compiler.compile_spectra_datalink(
+        spectra_table=table,
+        euclid_client=object(),
+        output_dir=tmp_path,
+        output_prefix="dl_all",
+        retrieval_type="ALL",
+        schema="sedm",
+        overwrite=True,
+    )
+
+    assert len(out_files) == 1
+    # 2 unique sources x 2 arms = 4 retrievals
+    assert len(calls) == 4
+    assert set(calls) == {
+        ("101", "SPECTRA_RGS"),
+        ("101", "SPECTRA_BGS"),
+        ("102", "SPECTRA_RGS"),
+        ("102", "SPECTRA_BGS"),
+    }
+
+    with fits.open(out_files[0]) as hdul:
+        # Primary + 4 spectra extensions.
+        assert len(hdul) == 5
+        lambdas = [h.header.get("LAMBRANG") for h in hdul[1:]]
+        assert sorted(lambdas) == ["BGS", "BGS", "RGS", "RGS"]
