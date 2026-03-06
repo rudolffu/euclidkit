@@ -116,6 +116,18 @@ Example:
      --output-dir ./output \
      --prefix compiled_spectra
 
+IDR DEEP arm-selection example:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_deep \
+     --environment IDR \
+     --idr-field DEEP \
+     --lambda-range BOTH
+
 upload-table
 ------------
 

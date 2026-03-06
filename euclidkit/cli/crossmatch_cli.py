@@ -450,22 +450,29 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Retrieve spectra via Euclid datalink instead of local datalabs_path/file_name')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment for datalink mode (default: PDR)')
+@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+              show_default=True,
+              help='IDR field selection (used by canonical mode to resolve DEEP BGS/RGS XMLs)')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path for datalink mode')
 @click.option('--retrieval-type', type=click.Choice(['ALL', 'SPECTRA_BGS', 'SPECTRA_RGS']),
               default='SPECTRA_RGS', show_default=True,
-              help='Datalink retrieval type (used with --use-datalink)')
+              help='Datalink retrieval type (legacy; unified arm selection is controlled by --lambda-range/-L)')
 @click.option('--schema', type=str, default='sedm', show_default=True,
               help='Datalink schema value (used with --use-datalink)')
 @click.option('--limit', type=int, default=None,
               help='Process only the first N rows from spectra table (useful for quick tests)')
 @click.option('--workers', type=int, default=1, show_default=True,
               help='Number of chunk workers (canonical compile only)')
+@click.option('--lambda-range', '-L', type=click.Choice(['RGS', 'BGS', 'BOTH']),
+              default='RGS', show_default=True,
+              help='Canonical mode spectral arm selection (RGS/BGS/BOTH)')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
+@click.pass_context
+def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, prefix: str,
                    max_extensions: int, overwrite: bool, use_datalink: bool,
-                   environment: str, credentials: Optional[str], retrieval_type: str,
-                   schema: str, limit: Optional[int], workers: int, verbose: bool):
+                   environment: str, idr_field: str, credentials: Optional[str], retrieval_type: str,
+                   schema: str, limit: Optional[int], workers: int, lambda_range: str, verbose: bool):
     """
     Compile individual spectra into chunked multi-extension FITS files.
     
@@ -520,9 +527,59 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
             click.echo(f"Output directory: {output_dir}")
             if not use_datalink:
                 click.echo(f"Chunk workers: {workers}")
+                click.echo(f"LambdaRange selection: {lambda_range}")
+                if environment == 'IDR':
+                    click.echo(f"IDR field: {idr_field.upper()}")
         
         # Compile spectra
         if use_datalink:
+            if idr_field.upper() != 'WIDE':
+                click.echo(
+                    "Note: --idr-field is ignored in --use-datalink mode "
+                    "(datalink selection depends on --retrieval-type and --schema)."
+                )
+            lambda_to_retrieval = {
+                'RGS': 'SPECTRA_RGS',
+                'BGS': 'SPECTRA_BGS',
+                'BOTH': 'ALL',
+            }
+            retrieval_to_lambda = {v: k for k, v in lambda_to_retrieval.items()}
+            lambda_selected = lambda_range.upper()
+            retrieval_selected = retrieval_type.upper()
+
+            lambda_src = ctx.get_parameter_source('lambda_range')
+            retrieval_src = ctx.get_parameter_source('retrieval_type')
+            lambda_explicit = lambda_src != click.core.ParameterSource.DEFAULT
+            retrieval_explicit = retrieval_src != click.core.ParameterSource.DEFAULT
+
+            if lambda_explicit:
+                mapped = lambda_to_retrieval[lambda_selected]
+                if retrieval_explicit and retrieval_selected != mapped:
+                    click.echo(
+                        "Warning: --lambda-range/-L and --retrieval-type disagree in datalink mode; "
+                        f"using --lambda-range ({lambda_selected} -> {mapped})."
+                    )
+                retrieval_selected = mapped
+            elif retrieval_explicit:
+                lambda_selected = retrieval_to_lambda.get(retrieval_selected, 'RGS')
+            else:
+                retrieval_selected = lambda_to_retrieval[lambda_selected]
+
+            click.echo(
+                f"Datalink arm selection: lambda_range={lambda_selected}, "
+                f"retrieval_type={retrieval_selected}"
+            )
+            dedup_sources, dedup_stats = compiler.deduplicate_by_source_id(
+                spectra_table=sources,
+                source_id_col='source_id',
+            )
+            if dedup_stats['duplicate_rows_removed'] > 0:
+                click.echo(
+                    "Datalink deduplication: "
+                    f"{dedup_stats['input_rows']} rows -> {dedup_stats['unique_sources']} unique source_id "
+                    f"(removed {dedup_stats['duplicate_rows_removed']} duplicates)"
+                )
+            sources_for_datalink = dedup_sources
             if workers != 1:
                 click.echo("Note: --workers is currently applied to canonical compile only; datalink runs with one worker.")
             archive = EuclidArchive(environment=environment)
@@ -531,30 +588,140 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
             else:
                 archive.login()
             output_files = compiler.compile_spectra_datalink(
-                spectra_table=sources,
+                spectra_table=sources_for_datalink,
                 euclid_client=archive.euclid,
                 output_dir=output_dir,
                 output_prefix=prefix,
-                retrieval_type=retrieval_type,
+                retrieval_type=retrieval_selected,
                 schema=schema,
                 overwrite=overwrite,
             )
-        else:
-            output_files = compiler.compile_spectra(
-                spectra_table=sources,
+            metadata_file = compiler.create_metadata_table(
+                spectra_table=sources_for_datalink,
+                output_files=output_files,
                 output_dir=output_dir,
-                output_prefix=prefix,
-                overwrite=overwrite,
-                workers=workers,
+                output_name=f"{prefix}_metadata.fits"
             )
-        
-        # Create metadata table
-        metadata_file = compiler.create_metadata_table(
-            spectra_table=sources,
-            output_files=output_files,
-            output_dir=output_dir,
-            output_name=f"{prefix}_metadata.fits"
-        )
+            metadata_files = [metadata_file]
+            total_processed = len(sources_for_datalink)
+        else:
+            selected_lambda = lambda_range.upper()
+            is_idr_deep = environment == 'IDR' and idr_field.upper() == 'DEEP'
+
+            if not is_idr_deep and selected_lambda in {'BGS', 'BOTH'}:
+                click.echo(
+                    f"Warning: {environment} {idr_field.upper()} only provides RGS in canonical mode; "
+                    f"falling back to RGS (requested {selected_lambda})."
+                )
+                selected_lambda = 'RGS'
+
+            metadata_files = []
+            if is_idr_deep:
+                sources, xml_stats = compiler.annotate_lambda_range_from_xml(
+                    spectra_table=sources,
+                    datalabs_path_col='datalabs_path',
+                    file_name_col='file_name',
+                    lambda_col='lambda_range',
+                )
+                click.echo(
+                    "LambdaRange XML summary: "
+                    f"total={xml_stats['total']}, resolved={xml_stats['resolved']}, "
+                    f"RGS={xml_stats['rgs']}, BGS={xml_stats['bgs']}, "
+                    f"unresolved={xml_stats['unresolved']}, ambiguous={xml_stats['ambiguous']}"
+                )
+
+                if selected_lambda == 'BOTH':
+                    rgs_table, rgs_stats = compiler.filter_table_by_lambda_range(sources, lambda_range='RGS')
+                    bgs_table, bgs_stats = compiler.filter_table_by_lambda_range(sources, lambda_range='BGS')
+                    click.echo(
+                        "LambdaRange selection summary (BOTH): "
+                        f"RGS selected={rgs_stats['selected']}, BGS selected={bgs_stats['selected']}, "
+                        f"unresolved={rgs_stats['unresolved']}, ambiguous={rgs_stats['ambiguous']}"
+                    )
+
+                    output_files = []
+                    total_processed = 0
+
+                    if len(rgs_table) > 0:
+                        rgs_prefix = f"{prefix}_rgs"
+                        rgs_files = compiler.compile_spectra(
+                            spectra_table=rgs_table,
+                            output_dir=output_dir,
+                            output_prefix=rgs_prefix,
+                            overwrite=overwrite,
+                            workers=workers,
+                        )
+                        output_files.extend(rgs_files)
+                        metadata_files.append(
+                            compiler.create_metadata_table(
+                                spectra_table=rgs_table,
+                                output_files=rgs_files,
+                                output_dir=output_dir,
+                                output_name=f"{rgs_prefix}_metadata.fits",
+                            )
+                        )
+                        total_processed += len(rgs_table)
+                    if len(bgs_table) > 0:
+                        bgs_prefix = f"{prefix}_bgs"
+                        bgs_files = compiler.compile_spectra(
+                            spectra_table=bgs_table,
+                            output_dir=output_dir,
+                            output_prefix=bgs_prefix,
+                            overwrite=overwrite,
+                            workers=workers,
+                        )
+                        output_files.extend(bgs_files)
+                        metadata_files.append(
+                            compiler.create_metadata_table(
+                                spectra_table=bgs_table,
+                                output_files=bgs_files,
+                                output_dir=output_dir,
+                                output_name=f"{bgs_prefix}_metadata.fits",
+                            )
+                        )
+                        total_processed += len(bgs_table)
+                else:
+                    selected_sources, sel_stats = compiler.filter_table_by_lambda_range(
+                        sources, lambda_range=selected_lambda
+                    )
+                    click.echo(
+                        "LambdaRange selection summary: "
+                        f"selected={sel_stats['selected']}, skipped_other_band={sel_stats['skipped_other_band']}, "
+                        f"unresolved={sel_stats['unresolved']}, ambiguous={sel_stats['ambiguous']}"
+                    )
+                    output_files = compiler.compile_spectra(
+                        spectra_table=selected_sources,
+                        output_dir=output_dir,
+                        output_prefix=prefix,
+                        overwrite=overwrite,
+                        workers=workers,
+                    )
+                    metadata_files.append(
+                        compiler.create_metadata_table(
+                            spectra_table=selected_sources,
+                            output_files=output_files,
+                            output_dir=output_dir,
+                            output_name=f"{prefix}_metadata.fits"
+                        )
+                    )
+                    total_processed = len(selected_sources)
+            else:
+                output_files = compiler.compile_spectra(
+                    spectra_table=sources,
+                    output_dir=output_dir,
+                    output_prefix=prefix,
+                    overwrite=overwrite,
+                    workers=workers,
+                )
+                metadata_files.append(
+                    compiler.create_metadata_table(
+                        spectra_table=sources,
+                        output_files=output_files,
+                        output_dir=output_dir,
+                        output_name=f"{prefix}_metadata.fits"
+                    )
+                )
+                total_processed = len(sources)
         
         # Report results
         click.echo(f"Compilation completed successfully!")
@@ -563,8 +730,13 @@ def compile_spectra(spectra_table: str, output_dir: str, prefix: str,
             file_name = Path(file_path).name
             click.echo(f"  {i:2d}. {file_name}")
         
-        click.echo(f"Metadata saved to: {Path(metadata_file).name}")
-        click.echo(f"Total spectra processed: {len(sources)}")
+        if len(metadata_files) == 1:
+            click.echo(f"Metadata saved to: {Path(metadata_files[0]).name}")
+        else:
+            click.echo("Metadata files:")
+            for i, meta_path in enumerate(metadata_files, 1):
+                click.echo(f"  {i:2d}. {Path(meta_path).name}")
+        click.echo(f"Total spectra processed: {total_processed}")
         
     except Exception as e:
         click.echo(f"Error compiling spectra: {e}", err=True)

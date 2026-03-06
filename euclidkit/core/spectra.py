@@ -10,6 +10,7 @@ import re
 import zipfile
 import logging
 import tempfile
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from collections import defaultdict
@@ -212,6 +213,186 @@ class SpectrumCompiler:
         """
         self.max_extensions = max_extensions
         self.loader = SpectrumLoader()
+
+    @staticmethod
+    def _normalize_spectrum_filename(file_name: str) -> str:
+        """Normalize FITS names so table '.fits' and XML '.fits.gz' match."""
+        if file_name is None:
+            return ""
+        name = Path(str(file_name)).name.strip().lower()
+        if name.endswith(".gz"):
+            name = name[:-3]
+        return name
+
+    @staticmethod
+    def deduplicate_by_source_id(
+        spectra_table: Table,
+        source_id_col: str = "source_id",
+    ) -> tuple[Table, Dict[str, int]]:
+        """
+        Keep the first row for each source_id, preserving input order.
+
+        Returns
+        -------
+        tuple
+            (deduplicated_table, stats)
+        """
+        if source_id_col not in spectra_table.colnames:
+            raise ValueError(f"Missing required column: {source_id_col}")
+
+        seen = set()
+        keep_indices: List[int] = []
+        duplicate_rows = 0
+        for idx, row in enumerate(spectra_table):
+            sid = str(row[source_id_col])
+            if sid in seen:
+                duplicate_rows += 1
+                continue
+            seen.add(sid)
+            keep_indices.append(idx)
+
+        dedup = spectra_table[keep_indices] if keep_indices else spectra_table[:0]
+        stats = {
+            "input_rows": len(spectra_table),
+            "unique_sources": len(dedup),
+            "duplicate_rows_removed": duplicate_rows,
+        }
+        return dedup, stats
+
+    def _parse_lambda_xml(self, xml_path: Path) -> Dict[str, Any]:
+        """Parse one XML file and return LambdaRange + normalized FITS file names."""
+        result = {"lambda_range": None, "file_names": []}
+        try:
+            root = ET.parse(xml_path).getroot()
+        except Exception as exc:
+            logger.warning("Failed to parse XML '%s': %s", xml_path, exc)
+            return result
+
+        lambda_range = None
+        file_names: List[str] = []
+        for elem in root.iter():
+            tag = elem.tag.split("}")[-1]
+            text = (elem.text or "").strip()
+            if not text:
+                continue
+            if tag == "LambdaRange":
+                lambda_range = text.upper()
+            elif tag == "FileName" and ".fits" in text.lower():
+                file_names.append(self._normalize_spectrum_filename(text))
+
+        if lambda_range not in {"RGS", "BGS"}:
+            lambda_range = None
+
+        result["lambda_range"] = lambda_range
+        result["file_names"] = file_names
+        return result
+
+    def annotate_lambda_range_from_xml(
+        self,
+        spectra_table: Table,
+        datalabs_path_col: str = "datalabs_path",
+        file_name_col: str = "file_name",
+        lambda_col: str = "lambda_range",
+    ) -> tuple[Table, Dict[str, int]]:
+        """
+        Annotate local spectra rows with LambdaRange by parsing XML in each datalabs path.
+
+        Returns
+        -------
+        tuple
+            (annotated_table, stats)
+        """
+        if datalabs_path_col not in spectra_table.colnames or file_name_col not in spectra_table.colnames:
+            raise ValueError(
+                f"Missing required columns for XML lambda resolution: {datalabs_path_col}, {file_name_col}"
+            )
+
+        table = spectra_table.copy()
+        path_to_index: Dict[str, Dict[str, set[str]]] = {}
+        unresolved = 0
+        ambiguous = 0
+        resolved = 0
+        rgs_count = 0
+        bgs_count = 0
+
+        lambda_values: List[str] = []
+        for row in table:
+            dpath = str(row[datalabs_path_col])
+            fname_norm = self._normalize_spectrum_filename(str(row[file_name_col]))
+
+            if dpath not in path_to_index:
+                mapping: Dict[str, set[str]] = defaultdict(set)
+                xml_files = sorted(Path(dpath).glob("*.xml"))
+                if not xml_files:
+                    logger.warning("No XML files found under datalabs path: %s", dpath)
+                for xml_file in xml_files:
+                    parsed = self._parse_lambda_xml(xml_file)
+                    lam = parsed.get("lambda_range")
+                    if lam is None:
+                        continue
+                    for xml_name in parsed.get("file_names", []):
+                        mapping[xml_name].add(lam)
+                path_to_index[dpath] = mapping
+
+            lambdas = path_to_index[dpath].get(fname_norm, set())
+            if len(lambdas) == 1:
+                lam = next(iter(lambdas))
+                lambda_values.append(lam)
+                resolved += 1
+                if lam == "RGS":
+                    rgs_count += 1
+                elif lam == "BGS":
+                    bgs_count += 1
+            elif len(lambdas) > 1:
+                lambda_values.append("AMBIGUOUS")
+                ambiguous += 1
+            else:
+                lambda_values.append("UNKNOWN")
+                unresolved += 1
+
+        table[lambda_col] = np.asarray(lambda_values, dtype="U16")
+        stats = {
+            "total": len(table),
+            "resolved": resolved,
+            "rgs": rgs_count,
+            "bgs": bgs_count,
+            "unresolved": unresolved,
+            "ambiguous": ambiguous,
+        }
+        return table, stats
+
+    def filter_table_by_lambda_range(
+        self,
+        spectra_table: Table,
+        lambda_range: str = "RGS",
+        lambda_col: str = "lambda_range",
+    ) -> tuple[Table, Dict[str, int]]:
+        """Filter an annotated table by LambdaRange selection."""
+        if lambda_col not in spectra_table.colnames:
+            raise ValueError(f"Missing required lambda column: {lambda_col}")
+
+        target = str(lambda_range).upper()
+        if target not in {"RGS", "BGS", "BOTH"}:
+            raise ValueError("lambda_range must be one of: RGS, BGS, BOTH")
+
+        values = np.asarray(spectra_table[lambda_col]).astype(str)
+        total = len(spectra_table)
+        is_resolved = np.isin(values, ["RGS", "BGS"])
+        selected_mask = is_resolved if target == "BOTH" else (values == target)
+
+        selected = spectra_table[selected_mask]
+        selected_values = np.asarray(selected[lambda_col]).astype(str) if len(selected) > 0 else np.asarray([])
+        stats = {
+            "total": total,
+            "resolved": int(np.sum(is_resolved)),
+            "selected": int(np.sum(selected_mask)),
+            "selected_rgs": int(np.sum(selected_values == "RGS")),
+            "selected_bgs": int(np.sum(selected_values == "BGS")),
+            "unresolved": int(np.sum(values == "UNKNOWN")),
+            "ambiguous": int(np.sum(values == "AMBIGUOUS")),
+            "skipped_other_band": int(np.sum(is_resolved & ~selected_mask)),
+        }
+        return selected, stats
 
     def _compile_single_chunk_local(
         self,
@@ -676,6 +857,20 @@ class SpectrumCompiler:
 
         if source_id_col not in spectra_table.colnames:
             raise ValueError(f"Missing required column: {source_id_col}")
+
+        dedup_table, dedup_stats = self.deduplicate_by_source_id(
+            spectra_table=spectra_table,
+            source_id_col=source_id_col,
+        )
+        if dedup_stats["duplicate_rows_removed"] > 0:
+            logger.info(
+                "Datalink deduplication: %d input rows -> %d unique sources "
+                "(removed %d duplicate rows)",
+                dedup_stats["input_rows"],
+                dedup_stats["unique_sources"],
+                dedup_stats["duplicate_rows_removed"],
+            )
+        spectra_table = dedup_table
 
         output_files = []
         chunk_number = 1

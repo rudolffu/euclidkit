@@ -16,6 +16,20 @@ access to the Datalabs volumes.
      --prefix compiled_spectra \
      --max-extensions 1000
 
+For IDR DEEP canonical tables containing both BGS and RGS rows, select the arm
+with ``-L/--lambda-range``. In ``BOTH`` mode, euclidkit writes separate outputs
+with ``_rgs`` and ``_bgs`` suffixes.
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_deep \
+     --environment IDR \
+     --idr-field DEEP \
+     -L BOTH
+
 Resume behavior
 ---------------
 
@@ -64,3 +78,7 @@ Notes:
 
 - ``--workers`` currently applies to canonical mode only.
 - For quick tests, use ``--limit N``.
+- ``-L/--lambda-range`` is the unified arm selector for both canonical and
+  datalink modes. In datalink mode, euclidkit maps it to
+  ``--retrieval-type`` (``RGS -> SPECTRA_RGS``, ``BGS -> SPECTRA_BGS``,
+  ``BOTH -> ALL``). ``--retrieval-type`` is kept for backward compatibility.

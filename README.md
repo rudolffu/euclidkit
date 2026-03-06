@@ -211,9 +211,19 @@ euclidkit compile-spectra \
     --prefix compiled_spectra \
     --max-extensions 1000 \
     --verbose
+
+# IDR DEEP canonical mode: choose arm(s) using XML LambdaRange
+euclidkit compile-spectra \
+    --spectra-table spectra_sources.fits \
+    --output-dir ./output \
+    --prefix compiled_deep \
+    --environment IDR \
+    --idr-field DEEP \
+    -L BOTH
 ```
 
 Note: for canonical compilation from local Datalabs FITS volumes, `--workers 2` is often not faster due to shared-storage I/O contention. Prefer `--workers 1` unless benchmarking on your setup shows a clear gain.
+Note: `-L/--lambda-range` is the unified arm selector. In datalink mode it maps to retrieval types (`RGS -> SPECTRA_RGS`, `BGS -> SPECTRA_BGS`, `BOTH -> ALL`). `--retrieval-type` is kept for backward compatibility.
 
 ## Key Features
 
