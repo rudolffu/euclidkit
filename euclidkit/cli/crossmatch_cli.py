@@ -10,8 +10,10 @@ from typing import Optional
 
 
 @click.command()
-@click.option('--input', '-i', required=True, type=click.Path(exists=True),
+@click.option('--input', '-i', required=False, type=click.Path(exists=True),
               help='Input source table (CSV, FITS, or VOTable)')
+@click.option('--user-table-name', type=str,
+              help='Archive user table name (e.g. bright_spectab_wide_north for user_<username>.bright_spectab_wide_north)')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output crossmatch results file')
 @click.option('--radius', '-r', type=float, default=1.0,
@@ -32,12 +34,14 @@ from typing import Optional
 @click.option('--match-mode', type=click.Choice(['auto', 'object-id', 'spatial']), default='auto',
               help='Matching mode: auto (default), object-id, or spatial')
 @click.option('--full-async', is_flag=True,
-              help='Upload entire table in a single asynchronous job (no batching)')
+              help='Use asynchronous TAP mode; very large tables are split into async chunks')
+@click.option('--async-chunk-size', type=int, default=500000, show_default=True,
+              help='Rows per async chunk when --full-async is used on large tables')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str,
+def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str, radius: float, ra_col: str, dec_col: str,
                environment: str, idr_field: str, credentials: Optional[str],
                max_sources: Optional[int], match_mode: str, full_async: bool,
-               verbose: bool):
+               async_chunk_size: int, verbose: bool):
     """
     Crossmatch user source table with Euclid MER catalogue.
     
@@ -53,6 +57,10 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
     archive = None
 
     try:
+        # Exactly one input mode is required.
+        if bool(input) == bool(user_table_name):
+            raise click.ClickException("Provide exactly one of --input or --user-table-name")
+
         # Initialize archive client
         archive = EuclidArchive(environment=environment)
         
@@ -65,7 +73,10 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
         selected_idr_field = idr_field.upper()
         if verbose:
             click.echo(f"Connected to {environment} environment")
-            click.echo(f"Input table: {input}")
+            if input:
+                click.echo(f"Input table: {input}")
+            else:
+                click.echo(f"Archive user table: {user_table_name}")
             click.echo(f"Match mode: {match_mode}")
             if match_mode == 'object-id':
                 click.echo("Search radius: n/a (object-id mode)")
@@ -77,6 +88,7 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
                 click.echo(f"IDR field: {selected_idr_field}")
             if full_async:
                 click.echo("Full-table async mode enabled (no batching)")
+                click.echo(f"Async chunk size: {async_chunk_size}")
 
         # Determine effective output path (IDR requires prefixed filenames)
         output_path = Path(output)
@@ -94,20 +106,35 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
             use_object_id = False
 
         # Perform crossmatch
-        crossmatch_kwargs = dict(
-            user_table=input,
-            radius=radius,
-            output_file=effective_output_path,
-            ra_col=ra_col,
-            dec_col=dec_col,
-            max_sources=max_sources,
-            use_object_id=use_object_id,
-            full_async=full_async,
-        )
-        if environment == 'IDR':
-            crossmatch_kwargs['idr_field'] = selected_idr_field
-
-        results = archive.crossmatch_sources(**crossmatch_kwargs)
+        if user_table_name:
+            crossmatch_kwargs = dict(
+                user_table_name=user_table_name,
+                radius=radius,
+                output_file=effective_output_path,
+                ra_col=ra_col,
+                dec_col=dec_col,
+                max_sources=max_sources,
+                use_object_id=use_object_id,
+                full_async=full_async,
+            )
+            if environment == 'IDR':
+                crossmatch_kwargs['idr_field'] = selected_idr_field
+            results = archive.crossmatch_user_table(**crossmatch_kwargs)
+        else:
+            crossmatch_kwargs = dict(
+                user_table=input,
+                radius=radius,
+                output_file=effective_output_path,
+                ra_col=ra_col,
+                dec_col=dec_col,
+                max_sources=max_sources,
+                use_object_id=use_object_id,
+                full_async=full_async,
+                async_chunk_size=async_chunk_size,
+            )
+            if environment == 'IDR':
+                crossmatch_kwargs['idr_field'] = selected_idr_field
+            results = archive.crossmatch_sources(**crossmatch_kwargs)
         
         if full_async:
             if results.get('results_downloaded'):
@@ -115,6 +142,8 @@ def crossmatch(input: str, output: str, radius: float, ra_col: str, dec_col: str
                 click.echo(f"Results saved to: {effective_output_path}")
                 if results.get('result_row_count') is not None:
                     click.echo(f"Rows downloaded: {results['result_row_count']}")
+                if results.get('chunk_count') is not None:
+                    click.echo(f"Chunks processed: {results['chunk_count']} (chunk size: {results.get('chunk_size')})")
                 job_id = results.get('job_id')
                 if job_id:
                     click.echo(f"Job ID: {job_id}")

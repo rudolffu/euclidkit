@@ -194,6 +194,7 @@ class EuclidArchive:
         use_object_id: Optional[bool] = None,
         idr_field: Optional[str] = None,
         full_async: bool = False,
+        async_chunk_size: int = 500000,
     ) -> Union[Table, Dict[str, Any]]:
         """
         Crossmatch user table with Euclid MER catalogue.
@@ -218,12 +219,18 @@ class EuclidArchive:
             Matching preference. None (default) auto-detects and uses object_id join
             when a suitable column exists; True forces equality join (warns if missing);
             False forces spatial crossmatch even if object_id is present.
+            When ``True``, ``source_id`` is also accepted as a fallback join key
+            to MER ``object_id`` if ``object_id`` columns are absent.
         idr_field : {'WIDE', 'DEEP'}, optional
             IDR field selector. Only used when environment='IDR' and mer_table is not
             explicitly provided. Defaults to 'WIDE'.
         full_async : bool, optional
-            If True, submit the entire user table as a single asynchronous job and
-            write job metadata to `output_file` instead of waiting for query results.
+            If True, use asynchronous TAP submission mode.
+            For tables larger than ``async_chunk_size``, the table is split into
+            multiple async jobs and results are downloaded/merged automatically.
+        async_chunk_size : int, optional
+            Chunk size (rows per async job) used when ``full_async=True`` for
+            large input tables. Default is 500000.
             
         Returns
         -------
@@ -256,23 +263,26 @@ class EuclidArchive:
         # Determine MER table name based on environment
         if mer_table is None:
             mer_table = self._get_mer_table_name(idr_field=idr_field)
-        
-        logger.info(f"Using MER table: {mer_table}")
-        if want_oid:
-            logger.info(f"Crossmatching {len(user_data)} sources in object-id mode")
-        else:
-            logger.info(f"Crossmatching {len(user_data)} sources with radius {radius} arcsec")
 
         # Decide matching mode
         user_cols = list(user_data.colnames)
         has_oid = 'object_id' in user_cols
         has_oid_alt = 'object_id_euclid' in user_cols
+        has_source_id = 'source_id' in user_cols
         want_oid = (
-            (use_object_id is True and (has_oid or has_oid_alt))
+            (use_object_id is True and (has_oid or has_oid_alt or has_source_id))
             or (use_object_id is None and (has_oid or has_oid_alt))
         )
-        if use_object_id is True and not (has_oid or has_oid_alt):
-            logger.warning("use_object_id=True but no object_id/object_id_euclid found; using spatial match")
+        if use_object_id is True and not (has_oid or has_oid_alt or has_source_id):
+            logger.warning("use_object_id=True but no object_id/object_id_euclid/source_id found; using spatial match")
+        elif use_object_id is True and has_source_id and not (has_oid or has_oid_alt):
+            logger.info("use_object_id=True and only source_id present; joining source_id to MER object_id")
+
+        logger.info(f"Using MER table: {mer_table}")
+        if want_oid:
+            logger.info(f"Crossmatching {len(user_data)} sources in object-id mode")
+        else:
+            logger.info(f"Crossmatching {len(user_data)} sources with radius {radius} arcsec")
 
         # Check/resolve RA/Dec columns only if spatial matching
         if not want_oid:
@@ -300,6 +310,69 @@ class EuclidArchive:
                 raise ValueError("User table is empty; nothing to submit in full_async mode.")
             if output_file is None:
                 raise ValueError("output_file must be provided when full_async=True to store job metadata.")
+            if async_chunk_size <= 0:
+                raise ValueError("async_chunk_size must be a positive integer")
+
+            # For very large tables, run async chunk jobs and merge downloaded results.
+            if len(user_data) > async_chunk_size:
+                logger.info(
+                    "full_async enabled with %d rows; using chunked async mode with chunk_size=%d",
+                    len(user_data), async_chunk_size
+                )
+                batches = [
+                    (i, min(i + async_chunk_size, len(user_data)))
+                    for i in range(0, len(user_data), async_chunk_size)
+                ]
+                chunk_results = []
+                job_ids = []
+                for idx, (start, end) in enumerate(batches, 1):
+                    logger.info("Submitting async chunk %d/%d (%d rows)", idx, len(batches), end - start)
+                    batch = user_data[start:end]
+                    submission = self._crossmatch_batch(
+                        batch,
+                        ra_col,
+                        dec_col,
+                        radius,
+                        mer_table,
+                        use_object_id,
+                        force_async=True,
+                        fetch_results=False,
+                    )
+                    job = submission.get('job')
+                    job_id = getattr(job, 'jobid', None)
+                    if job_id:
+                        job_ids.append(job_id)
+
+                    try:
+                        batch_result = job.get_results()
+                        if batch_result is not None and len(batch_result) > 0:
+                            chunk_results.append(batch_result)
+                    except Exception as exc:
+                        logger.warning("Failed to fetch async results for chunk %d: %s", idx, exc)
+
+                if chunk_results:
+                    final_result = Table(np.concatenate([r for r in chunk_results]))
+                else:
+                    final_result = Table()
+
+                save_table(final_result, output_file)
+                logger.info(
+                    "Saved merged chunked async results (%d rows) to %s",
+                    len(final_result), output_file
+                )
+                return {
+                    'type': 'euclidkit_crossmatch_async_chunked',
+                    'environment': self.environment,
+                    'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+                    'row_count': len(user_data),
+                    'chunk_size': async_chunk_size,
+                    'chunk_count': len(batches),
+                    'job_ids': job_ids,
+                    'results_downloaded': True,
+                    'result_row_count': len(final_result),
+                    'output_file': str(output_file),
+                    'idr_field': idr_field.upper() if idr_field else None,
+                }
 
             submission = self._crossmatch_batch(
                 user_data,
@@ -506,6 +579,203 @@ class EuclidArchive:
             logger.info(f"Uploaded table '{table_name}' synchronously")
 
         return job_info
+
+    def _resolve_user_table_reference(self, user_table_name: str) -> str:
+        """Resolve short user table names to fully qualified TAP schema names."""
+        table_name = user_table_name.strip()
+        if '.' in table_name:
+            return table_name
+
+        # astroquery TapPlus stores the logged-in username on this private attribute.
+        username = getattr(self.euclid, "_TapPlus__user", None)
+        if not username:
+            username = os.environ.get("EUCLID_USER")
+        if not username:
+            raise ValueError(
+                "Could not resolve username for user table. "
+                "Provide fully qualified name like user_<username>.<table>."
+            )
+        return f"user_{username}.{table_name}"
+
+    def _get_remote_table_columns(self, qualified_table_name: str) -> List[str]:
+        """Fetch column names for a remote TAP table from TAP_SCHEMA."""
+        if '.' not in qualified_table_name:
+            raise ValueError("qualified_table_name must include schema and table name")
+        schema_name, table_name = qualified_table_name.split('.', 1)
+        query = (
+            "SELECT column_name "
+            "FROM TAP_SCHEMA.columns "
+            f"WHERE lower(schema_name) = lower('{schema_name}') "
+            f"AND lower(table_name) = lower('{table_name}')"
+        )
+        job = self.euclid.launch_job(query)
+        result = job.get_results()
+        return [str(name).lower() for name in result['column_name']]
+
+    def crossmatch_user_table(
+        self,
+        user_table_name: str,
+        radius: float = 1.0,
+        mer_table: Optional[str] = None,
+        output_file: Optional[Union[str, Path]] = None,
+        ra_col: str = 'ra',
+        dec_col: str = 'dec',
+        max_sources: Optional[int] = None,
+        use_object_id: Optional[bool] = None,
+        idr_field: Optional[str] = None,
+        full_async: bool = False,
+    ) -> Union[Table, Dict[str, Any]]:
+        """
+        Crossmatch an existing archive user table against MER without re-upload.
+
+        Parameters are similar to ``crossmatch_sources`` but ``user_table_name``
+        refers to an already-uploaded TAP table.
+        """
+        self._ensure_client()
+        if not self._logged_in:
+            logger.warning("Not logged in - attempting login with default credentials")
+            self.login()
+
+        if mer_table is None:
+            mer_table = self._get_mer_table_name(idr_field=idr_field)
+
+        user_table_ref = self._resolve_user_table_reference(user_table_name)
+        user_cols = self._get_remote_table_columns(user_table_ref)
+        if not user_cols:
+            raise ValueError(f"No columns found for remote table {user_table_ref}")
+        if max_sources is not None and max_sources <= 0:
+            raise ValueError("max_sources must be a positive integer")
+
+        has_oid = 'object_id' in user_cols
+        has_oid_alt = 'object_id_euclid' in user_cols
+        has_source_id = 'source_id' in user_cols
+        want_oid = (
+            (use_object_id is True and (has_oid or has_oid_alt or has_source_id))
+            or (use_object_id is None and (has_oid or has_oid_alt))
+        )
+
+        if use_object_id is True and not (has_oid or has_oid_alt or has_source_id):
+            logger.warning("use_object_id=True but no object_id/object_id_euclid/source_id found; using spatial match")
+        elif use_object_id is True and has_source_id and not (has_oid or has_oid_alt):
+            logger.info("use_object_id=True and only source_id present; joining source_id to MER object_id")
+
+        # Resolve RA/Dec columns for spatial mode only.
+        if not want_oid:
+            ra_candidates = [ra_col.lower(), 'right_ascension', 'ra', 'ra_deg', 'raj2000', 'right_ascension_euclid', 'ra_euclid']
+            dec_candidates = [dec_col.lower(), 'declination', 'dec', 'dec_deg', 'dej2000', 'declination_euclid', 'dec_euclid']
+            ra_use = next((c for c in ra_candidates if c in user_cols), None)
+            dec_use = next((c for c in dec_candidates if c in user_cols), None)
+            if not ra_use or not dec_use:
+                raise ValueError(
+                    f"Could not find RA/Dec columns in remote table {user_table_ref}. "
+                    f"Available columns include: {user_cols[:20]}"
+                )
+            ra_col = ra_use
+            dec_col = dec_use
+
+        logger.info(f"Using MER table: {mer_table}")
+        logger.info(f"Using remote user table: {user_table_ref}")
+        if want_oid:
+            logger.info("Crossmatching remote table in object-id mode")
+        else:
+            logger.info(f"Crossmatching remote table with radius {radius} arcsec")
+
+        mer_oid_alias = "mer_object_id" if has_oid else "object_id"
+        mer_select_parts = [
+            f"m.object_id AS {mer_oid_alias}",
+            "m.right_ascension AS mer_ra",
+            "m.declination AS mer_dec",
+            "m.mu_max AS mu_max",
+            "m.mumax_minus_mag AS mumax_minus_mag",
+            "m.point_like_prob AS point_like_prob",
+            "m.extended_prob AS extended_prob",
+            "m.kron_radius AS kron_radius",
+            "m.kron_radius_err AS kron_radius_err",
+            "m.gaia_id AS gaia_id",
+            "m.gaia_match_quality AS gaia_match_quality",
+            "m.flux_y_templfit AS flux_y_templfit",
+            "m.flux_h_templfit AS flux_h_templfit",
+            "m.flux_j_templfit AS flux_j_templfit",
+            "m.flux_u_ext_decam_templfit AS flux_u_ext_decam_templfit",
+            "m.flux_g_ext_decam_templfit AS flux_g_ext_decam_templfit",
+            "m.flux_r_ext_decam_templfit AS flux_r_ext_decam_templfit",
+            "m.flux_i_ext_decam_templfit AS flux_i_ext_decam_templfit",
+            "m.flux_z_ext_decam_templfit AS flux_z_ext_decam_templfit",
+            "m.flux_u_ext_megacam_templfit AS flux_u_ext_megacam_templfit",
+            "m.flux_r_ext_megacam_templfit AS flux_r_ext_megacam_templfit",
+            "m.flux_g_ext_jpcam_templfit AS flux_g_ext_jpcam_templfit",
+            "m.flux_i_ext_panstarrs_templfit AS flux_i_ext_panstarrs_templfit",
+            "m.flux_z_ext_panstarrs_templfit AS flux_z_ext_panstarrs_templfit",
+            "m.flux_g_ext_hsc_templfit AS flux_g_ext_hsc_templfit",
+            "m.flux_z_ext_hsc_templfit AS flux_z_ext_hsc_templfit",
+            "m.fluxerr_y_templfit AS fluxerr_y_templfit",
+            "m.fluxerr_j_templfit AS fluxerr_j_templfit",
+            "m.fluxerr_h_templfit AS fluxerr_h_templfit",
+            "m.fluxerr_r_ext_decam_templfit AS fluxerr_r_ext_decam_templfit",
+            "m.fluxerr_i_ext_decam_templfit AS fluxerr_i_ext_decam_templfit",
+            "m.fluxerr_z_ext_decam_templfit AS fluxerr_z_ext_decam_templfit",
+            "m.fluxerr_u_ext_megacam_templfit AS fluxerr_u_ext_megacam_templfit",
+            "m.fluxerr_r_ext_megacam_templfit AS fluxerr_r_ext_megacam_templfit",
+            "m.fluxerr_g_ext_jpcam_templfit AS fluxerr_g_ext_jpcam_templfit",
+            "m.fluxerr_i_ext_panstarrs_templfit AS fluxerr_i_ext_panstarrs_templfit",
+            "m.fluxerr_z_ext_panstarrs_templfit AS fluxerr_z_ext_panstarrs_templfit",
+            "m.fluxerr_g_ext_hsc_templfit AS fluxerr_g_ext_hsc_templfit",
+            "m.fluxerr_z_ext_hsc_templfit AS fluxerr_z_ext_hsc_templfit",
+            "m.fluxerr_u_ext_decam_templfit AS fluxerr_u_ext_decam_templfit",
+            "m.fluxerr_g_ext_decam_templfit AS fluxerr_g_ext_decam_templfit",
+            "m.flux_vis_psf AS flux_vis_psf",
+            "m.fluxerr_vis_psf AS fluxerr_vis_psf",
+            "m.segmentation_map_id AS segmentation_map_id",
+            "m.segmentation_area AS segmentation_area",
+        ]
+
+        if want_oid:
+            if has_oid:
+                user_id_col = 'object_id'
+            elif has_oid_alt:
+                user_id_col = 'object_id_euclid'
+            else:
+                user_id_col = 'source_id'
+            top_clause = f"TOP {int(max_sources)} " if max_sources is not None else ""
+            query = (
+                f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
+                f"FROM {user_table_ref} AS u "
+                f"JOIN {mer_table} AS m ON u.{user_id_col} = m.object_id "
+                f"ORDER BY u.{user_id_col}"
+            )
+        else:
+            radius_deg = radius / 3600.0
+            top_clause = f"TOP {int(max_sources)} " if max_sources is not None else ""
+            query = (
+                f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
+                f"FROM {user_table_ref} AS u "
+                f"JOIN {mer_table} AS m "
+                f"ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg} "
+                f"ORDER BY u.{ra_col}"
+            )
+
+        if full_async:
+            job = self.euclid.launch_job_async(query)
+            result = job.get_results()
+            if output_file:
+                save_table(result, output_file)
+                logger.info(f"Saved async crossmatch results to {output_file}")
+            return {
+                'type': 'euclidkit_crossmatch_remote_async',
+                'environment': self.environment,
+                'job_id': getattr(job, 'jobid', None),
+                'results_downloaded': True,
+                'result_row_count': len(result) if result is not None else 0,
+                'output_file': str(output_file) if output_file else None,
+                'query': query,
+            }
+
+        job = self.euclid.launch_job(query)
+        result = job.get_results()
+        if output_file:
+            save_table(result, output_file)
+            logger.info(f"Saved crossmatch results to {output_file}")
+        return result
     
     def _get_mer_table_name(self, idr_field: Optional[str] = None) -> str:
         """Get MER catalogue table name for current environment."""
@@ -582,8 +852,12 @@ class EuclidArchive:
             user_cols = list(batch.colnames)
             has_oid = 'object_id' in user_cols
             has_oid_alt = 'object_id_euclid' in user_cols
+            has_source_id = 'source_id' in user_cols
             # Determine if we want to use object_id join
-            want_oid = (use_object_id is True) or (use_object_id is None and (has_oid or has_oid_alt))
+            want_oid = (
+                (use_object_id is True and (has_oid or has_oid_alt or has_source_id))
+                or (use_object_id is None and (has_oid or has_oid_alt))
+            )
 
             # Columns we commonly want from MER
             mer_columns = [
@@ -634,9 +908,14 @@ class EuclidArchive:
                 ('segmentation_area', 'segmentation_area'),
             ]
 
-            if want_oid and (has_oid or has_oid_alt):
+            if want_oid and (has_oid or has_oid_alt or has_source_id):
                 # Equality join on object_id
-                user_id_col = 'object_id' if has_oid else 'object_id_euclid'
+                if has_oid:
+                    user_id_col = 'object_id'
+                elif has_oid_alt:
+                    user_id_col = 'object_id_euclid'
+                else:
+                    user_id_col = 'source_id'
 
                 # Build user select list, avoiding name collision with MER object_id
                 user_aliases = set()
@@ -667,8 +946,8 @@ class EuclidArchive:
                     f"ORDER BY u.{user_id_col}"
                 )
             else:
-                if use_object_id is True and not (has_oid or has_oid_alt):
-                    logger.warning("use_object_id=True but no object_id column found; falling back to spatial match")
+                if use_object_id is True and not (has_oid or has_oid_alt or has_source_id):
+                    logger.warning("use_object_id=True but no object_id/object_id_euclid/source_id found; falling back to spatial match")
                 # Spatial crossmatch via distance predicate
                 radius_deg = radius / 3600.0  # Convert to degrees
                 query = f"""

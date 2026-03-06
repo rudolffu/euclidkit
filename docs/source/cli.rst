@@ -44,6 +44,33 @@ Example:
      --environment IDR \
      --idr-field WIDE
 
+Archive user-table example (no re-upload):
+
+.. code-block:: bash
+
+   euclidkit crossmatch \
+     --user-table-name bright_spectab_wide_north \
+     --output crossmatch_results.fits \
+     --match-mode object-id \
+     --environment IDR \
+     --idr-field WIDE
+
+Large-table async example:
+
+.. code-block:: bash
+
+   euclidkit crossmatch \
+     --input huge_sources.fits \
+     --output huge_crossmatch.fits \
+     --match-mode object-id \
+     --full-async \
+     --async-chunk-size 500000
+
+Option semantics:
+
+- ``--max-sources`` limits total processed rows from the input table.
+- ``--async-chunk-size`` controls rows per async TAP job in ``--full-async`` mode.
+
 query-spectra
 -------------
 

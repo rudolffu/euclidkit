@@ -113,11 +113,12 @@ euclidkit crossmatch \
     --verbose
 
 # Submit the entire table as a single async job (no batching). The output file
-# will contain TAP job metadata instead of immediate crossmatch results.
+# uses async TAP mode; for very large tables euclidkit splits into async chunks.
 euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
-    --full-async
+    --full-async \
+    --async-chunk-size 500000
 
 # When using the IDR environment the command defaults to the WIDE field and
 # writes results to wide_<filename>. Use --idr-field DEEP to query the deep stack:
@@ -126,7 +127,20 @@ euclidkit crossmatch \
     --output crossmatch_results.fits \
     --environment IDR \
     --idr-field DEEP
+
+# Crossmatch an already-uploaded archive user table (no local upload needed)
+euclidkit crossmatch \
+    --user-table-name bright_spectab_wide_north \
+    --output crossmatch_results.fits \
+    --match-mode object-id \
+    --environment IDR \
+    --idr-field WIDE
 ```
+
+`--max-sources` vs `--async-chunk-size`:
+
+- `--max-sources`: limits how many rows from the input table are processed in total.
+- `--async-chunk-size`: controls rows per async TAP job when `--full-async` is enabled.
 
 ### Uploading Tables
 
