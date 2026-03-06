@@ -128,6 +128,19 @@ IDR DEEP arm-selection example:
      --idr-field DEEP \
      --lambda-range BOTH
 
+Datalink dual-arm example:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_dl \
+     --use-datalink \
+     --environment IDR \
+     --schema sedm \
+     -L BOTH
+
 upload-table
 ------------
 

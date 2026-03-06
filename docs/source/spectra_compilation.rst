@@ -70,15 +70,22 @@ Use ``--use-datalink`` to retrieve spectra by source ID instead of local
      --spectra-table spectra_sources.fits \
      --output-dir ./output \
      --use-datalink \
+     -L BOTH \
      --environment IDR \
-     --schema sedm \
-     --retrieval-type SPECTRA_RGS
+     --schema sedm
+
+In datalink ``-L BOTH`` mode, euclidkit writes separate outputs:
+
+- ``<prefix>_rgs_chunk_###.fits``
+- ``<prefix>_bgs_chunk_###.fits``
 
 Notes:
 
 - ``--workers`` currently applies to canonical mode only.
 - For quick tests, use ``--limit N``.
 - ``-L/--lambda-range`` is the unified arm selector for both canonical and
-  datalink modes. In datalink mode, euclidkit maps it to
-  ``--retrieval-type`` (``RGS -> SPECTRA_RGS``, ``BGS -> SPECTRA_BGS``,
-  ``BOTH -> ALL``). ``--retrieval-type`` is kept for backward compatibility.
+  datalink modes.
+- In datalink mode, ``-L RGS`` maps to ``SPECTRA_RGS`` and ``-L BGS`` maps to
+  ``SPECTRA_BGS``. ``-L BOTH`` runs both arms and writes separate files.
+- ``--retrieval-type`` is kept for backward compatibility; if it conflicts with
+  ``-L/--lambda-range``, ``-L`` takes precedence.

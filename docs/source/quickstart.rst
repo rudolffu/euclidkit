@@ -32,6 +32,18 @@ Compile spectra into chunked FITS (on Datalabs):
      --prefix compiled_spectra \
      --max-extensions 1000
 
+Compile both Euclid arms via datalink (RGS + BGS):
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_dl \
+     --use-datalink \
+     --environment IDR \
+     -L BOTH
+
 Python API example
 ------------------
 
