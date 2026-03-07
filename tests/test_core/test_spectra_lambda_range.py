@@ -100,6 +100,8 @@ def test_compile_spectra_datalink_all_fetches_both_arms(tmp_path):
         {
             "source_id": [101, 101, 102, 102],
             "object_id": [101, 101, 102, 102],
+            "right_ascension": [10.1, 10.1, 10.2, 10.2],
+            "declination": [-1.1, -1.1, -1.2, -1.2],
         }
     )
 
@@ -137,5 +139,16 @@ def test_compile_spectra_datalink_all_fetches_both_arms(tmp_path):
     with fits.open(out_files[0]) as hdul:
         # Primary + 4 spectra extensions.
         assert len(hdul) == 5
-        lambdas = [h.header.get("LAMBRANG") for h in hdul[1:]]
+        lambdas = [h.header.get("LRANGE") for h in hdul[1:]]
         assert sorted(lambdas) == ["BGS", "BGS", "RGS", "RGS"]
+        # RA/DEC should be written from right_ascension/declination aliases.
+        assert hdul[1].header.get("RA") is not None
+        assert hdul[1].header.get("DEC") is not None
+
+
+def test_resolve_radec_columns_aliases():
+    compiler = SpectrumCompiler(max_extensions=10)
+    table = Table({"right_ascension": [1.0], "declination": [2.0]})
+    ra_col, dec_col = compiler._resolve_radec_columns(table)
+    assert ra_col == "right_ascension"
+    assert dec_col == "declination"

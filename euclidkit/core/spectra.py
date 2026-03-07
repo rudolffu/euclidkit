@@ -259,6 +259,28 @@ class SpectrumCompiler:
         }
         return dedup, stats
 
+    @staticmethod
+    def _resolve_radec_columns(
+        table: Table,
+        ra_candidates: Optional[List[str]] = None,
+        dec_candidates: Optional[List[str]] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Resolve RA/Dec columns from common aliases."""
+        if ra_candidates is None:
+            ra_candidates = [
+                'ra_obj', 'right_ascension', 'RA', 'ra', 'ra_deg', 'RAJ2000',
+                'right_ascension_euclid', 'ra_euclid',
+            ]
+        if dec_candidates is None:
+            dec_candidates = [
+                'dec_obj', 'declination', 'DEC', 'dec', 'dec_deg', 'DEJ2000',
+                'declination_euclid', 'dec_euclid',
+            ]
+
+        ra_col = next((c for c in ra_candidates if c in table.colnames), None)
+        dec_col = next((c for c in dec_candidates if c in table.colnames), None)
+        return ra_col, dec_col
+
     def _parse_lambda_xml(self, xml_path: Path) -> Dict[str, Any]:
         """Parse one XML file and return LambdaRange + normalized FITS file names."""
         result = {"lambda_range": None, "file_names": []}
@@ -420,6 +442,7 @@ class SpectrumCompiler:
         hdul_new = fits.HDUList([primary_hdu])
 
         grouped_rows: Dict[str, List[Any]] = defaultdict(list)
+        ra_col, dec_col = self._resolve_radec_columns(chunk)
         chunk_failed = 0
         grouped_count = 0
         for source in chunk:
@@ -456,10 +479,10 @@ class SpectrumCompiler:
                     spectrum_hdu.name = str(source[source_id_col])
                     spectrum_hdu.header['SOURC_ID'] = source[source_id_col]
 
-                    if 'ra_obj' in source.colnames:
-                        spectrum_hdu.header['RA'] = source['ra_obj']
-                    if 'dec_obj' in source.colnames:
-                        spectrum_hdu.header['DEC'] = source['dec_obj']
+                    if ra_col is not None:
+                        spectrum_hdu.header['RA'] = source[ra_col]
+                    if dec_col is not None:
+                        spectrum_hdu.header['DEC'] = source[dec_col]
 
                     hdul_new.append(spectrum_hdu)
                 except Exception as e:
@@ -875,6 +898,7 @@ class SpectrumCompiler:
         output_files = []
         chunk_number = 1
         failed_count = 0
+        ra_col, dec_col = self._resolve_radec_columns(spectra_table)
 
         for i in range(0, len(spectra_table), self.max_extensions):
             chunk = spectra_table[i:i + self.max_extensions]
@@ -922,13 +946,13 @@ class SpectrumCompiler:
                         else:
                             spectrum_hdu.name = sid
                         spectrum_hdu.header['SOURC_ID'] = sid
-                        spectrum_hdu.header['LAMBRANG'] = 'RGS' if retrieval_arm == 'SPECTRA_RGS' else 'BGS'
+                        spectrum_hdu.header['LRANGE'] = 'RGS' if retrieval_arm == 'SPECTRA_RGS' else 'BGS'
                         spectrum_hdu.header['RETRTYPE'] = retrieval_arm
 
-                        if 'ra_obj' in source.colnames:
-                            spectrum_hdu.header['RA'] = source['ra_obj']
-                        if 'dec_obj' in source.colnames:
-                            spectrum_hdu.header['DEC'] = source['dec_obj']
+                        if ra_col is not None:
+                            spectrum_hdu.header['RA'] = source[ra_col]
+                        if dec_col is not None:
+                            spectrum_hdu.header['DEC'] = source[dec_col]
 
                         hdul_new.append(spectrum_hdu)
                         added_count += 1
