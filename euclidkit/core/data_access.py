@@ -7,6 +7,7 @@ Provides interfaces to Euclid science archive and data volumes.
 import os
 import logging
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Union, Optional, List, Dict, Any, Tuple
@@ -85,6 +86,46 @@ class EuclidArchive:
             from astroquery.esa.euclid.core import EuclidClass
             self.euclid = EuclidClass(environment=self.environment)
         return self.euclid
+
+    def _sanitize_column_name(self, name: str) -> str:
+        """Convert a column name to an ADQL-safe simple identifier."""
+        cleaned = re.sub(r"[^0-9A-Za-z_]", "_", str(name)).strip("_").lower()
+        if not cleaned:
+            cleaned = "col"
+        if not re.match(r"^[A-Za-z_]", cleaned):
+            cleaned = f"c_{cleaned}"
+        return cleaned
+
+    def _sanitize_upload_table_columns(self, table: Table) -> Tuple[Table, Dict[str, str]]:
+        """
+        Return a copy of a table with ADQL-safe upload column names.
+
+        Names are normalized to lower-case and restricted to [A-Za-z_][A-Za-z0-9_]*.
+        """
+        renamed = table.copy()
+        mapping: Dict[str, str] = {}
+        used: set[str] = set()
+
+        for original in table.colnames:
+            base = self._sanitize_column_name(original)
+            candidate = base
+            suffix = 1
+            while candidate in used:
+                suffix += 1
+                candidate = f"{base}_{suffix}"
+            used.add(candidate)
+            mapping[str(original)] = candidate
+
+        changes = {old: new for old, new in mapping.items() if old != new}
+        for old, new in changes.items():
+            renamed.rename_column(old, new)
+
+        if changes:
+            logger.info("Sanitized %d upload column name(s) for ADQL compatibility", len(changes))
+            for old, new in changes.items():
+                logger.info("  %s -> %s", old, new)
+
+        return renamed, mapping
     
     def login(
         self,
@@ -255,6 +296,11 @@ class EuclidArchive:
             logger.info("Using provided astropy Table")
         else:
             raise ValueError("user_table must be file path, astropy Table, or pandas DataFrame")
+
+        # Normalize column names so TAP_UPLOAD queries are robust against non-simple names.
+        user_data, colmap = self._sanitize_upload_table_columns(user_data)
+        ra_col = colmap.get(ra_col, ra_col)
+        dec_col = colmap.get(dec_col, dec_col)
         
         if max_sources:
             user_data = user_data[:max_sources]
@@ -504,7 +550,8 @@ class EuclidArchive:
         Parameters
         ----------
         table : str, Path, or astropy Table
-            Resource to upload. File paths are passed directly to TAP.
+            Resource to upload. Input is normalized to ADQL-safe column names
+            before upload.
         table_name : str
             Destination table name (without schema qualifiers).
         description : str, optional
@@ -534,16 +581,22 @@ class EuclidArchive:
 
         resource = table
         inferred_format = fmt
+        temp_upload_path: Optional[Path] = None
 
         if isinstance(table, (str, Path)):
             path = Path(table)
             if not path.exists():
                 raise FileNotFoundError(f"Table file not found: {path}")
-            resource = str(path)
-            if inferred_format is None:
-                inferred_format = self._infer_upload_format(path.suffix.lower())
+            loaded = load_table(path)
+            sanitized, _ = self._sanitize_upload_table_columns(loaded)
+            with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
+                sanitized.write(tmp_file.name, format='votable', overwrite=True)
+                temp_upload_path = Path(tmp_file.name)
+            resource = str(temp_upload_path)
+            inferred_format = 'votable'
         else:
             # astropy Table upload
+            resource, _ = self._sanitize_upload_table_columns(table)
             if inferred_format is None:
                 inferred_format = 'votable'
 
@@ -554,13 +607,17 @@ class EuclidArchive:
             except Exception as exc:  # pragma: no cover - network errors
                 logger.warning(f"Failed to delete existing table '{table_name}': {exc}")
 
-        job = self.euclid.upload_table(
-            upload_resource=resource,
-            table_name=table_name,
-            table_description=description,
-            format=inferred_format,
-            verbose=verbose,
-        )
+        try:
+            job = self.euclid.upload_table(
+                upload_resource=resource,
+                table_name=table_name,
+                table_description=description,
+                format=inferred_format,
+                verbose=verbose,
+            )
+        finally:
+            if temp_upload_path is not None and temp_upload_path.exists():
+                temp_upload_path.unlink()
 
         job_info = {
             'table_name': table_name,
@@ -1102,6 +1159,9 @@ class EuclidArchive:
         """Crossmatch a batch of sources."""
         
         self._ensure_client()
+        batch, colmap = self._sanitize_upload_table_columns(batch)
+        ra_col = colmap.get(ra_col, ra_col)
+        dec_col = colmap.get(dec_col, dec_col)
 
         # Upload user table to archive for crossmatching
         with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
