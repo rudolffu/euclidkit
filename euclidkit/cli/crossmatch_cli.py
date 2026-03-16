@@ -13,7 +13,7 @@ from typing import Optional
 @click.option('--input', '-i', required=False, type=click.Path(exists=True),
               help='Input source table (CSV, FITS, or VOTable)')
 @click.option('--user-table-name', type=str,
-              help='Archive user table name (e.g. bright_spectab_wide_north for user_<username>.bright_spectab_wide_north)')
+              help='Archive user table name (e.g. my_table for user_<username>.my_table)')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output crossmatch results file')
 @click.option('--radius', '-r', type=float, default=1.0,

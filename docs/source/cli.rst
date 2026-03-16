@@ -49,7 +49,7 @@ Archive user-table example (no re-upload):
 .. code-block:: bash
 
    euclidkit crossmatch \
-     --user-table-name bright_spectab_wide_north \
+     --user-table-name my_table \
      --output crossmatch_results.fits \
      --match-mode object-id \
      --environment IDR \

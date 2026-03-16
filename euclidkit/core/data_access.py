@@ -14,7 +14,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
-from astropy.table import Table
+from astropy.table import Table, vstack
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
@@ -602,15 +602,54 @@ class EuclidArchive:
         if '.' not in qualified_table_name:
             raise ValueError("qualified_table_name must include schema and table name")
         schema_name, table_name = qualified_table_name.split('.', 1)
-        query = (
-            "SELECT column_name "
-            "FROM TAP_SCHEMA.columns "
-            f"WHERE lower(schema_name) = lower('{schema_name}') "
-            f"AND lower(table_name) = lower('{table_name}')"
-        )
-        job = self.euclid.launch_job(query)
-        result = job.get_results()
-        return [str(name).lower() for name in result['column_name']]
+        tap_queries = [
+            (
+                "SELECT column_name "
+                "FROM TAP_SCHEMA.columns "
+                f"WHERE lower(schema_name) = lower('{schema_name}') "
+                f"AND lower(table_name) = lower('{table_name}')"
+            ),
+            (
+                "SELECT column_name "
+                "FROM TAP_SCHEMA.columns "
+                f"WHERE lower(table_name) = lower('{qualified_table_name}')"
+            ),
+        ]
+
+        for query in tap_queries:
+            try:
+                job = self.euclid.launch_job(query)
+                result = job.get_results()
+                if result is not None and len(result) > 0 and 'column_name' in result.colnames:
+                    cols = [str(name).lower() for name in result['column_name']]
+                    if cols:
+                        return cols
+            except Exception as exc:
+                logger.debug("TAP_SCHEMA column lookup failed for %s: %s", qualified_table_name, exc)
+
+        # Final fallback: query the table directly and infer columns from result schema.
+        # This handles archive setups where TAP_SCHEMA metadata for user tables is incomplete.
+        fallback_query = f"SELECT TOP 1 * FROM {qualified_table_name}"
+        try:
+            job = self.euclid.launch_job(fallback_query)
+            result = job.get_results()
+            if result is not None:
+                cols = [str(name).lower() for name in result.colnames]
+                if cols:
+                    logger.info(
+                        "Resolved columns for %s using direct table introspection fallback",
+                        qualified_table_name,
+                    )
+                    return cols
+        except Exception as exc:
+            logger.debug(
+                "Direct table introspection failed for %s with query `%s`: %s",
+                qualified_table_name,
+                fallback_query,
+                exc,
+            )
+
+        return []
 
     def crossmatch_user_table(
         self,
@@ -736,45 +775,258 @@ class EuclidArchive:
                 user_id_col = 'object_id_euclid'
             else:
                 user_id_col = 'source_id'
-            top_clause = f"TOP {int(max_sources)} " if max_sources is not None else ""
-            query = (
-                f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
-                f"FROM {user_table_ref} AS u "
-                f"JOIN {mer_table} AS m ON u.{user_id_col} = m.object_id "
-                f"ORDER BY u.{user_id_col}"
-            )
+            order_col = user_id_col
         else:
             radius_deg = radius / 3600.0
-            top_clause = f"TOP {int(max_sources)} " if max_sources is not None else ""
-            query = (
+            order_col = ra_col
+
+        # User-table crossmatch always runs via async TAP execution.
+        # Preflight row-count check is mandatory to decide whether to chunk.
+        short_table_name = user_table_ref.split('.', 1)[1]
+        oid_col = f"{short_table_name}_oid"
+        if oid_col.lower() not in user_cols:
+            raise ValueError(
+                f"Expected indexed OID column '{oid_col}' in {user_table_ref}, "
+                f"but it was not found."
+            )
+
+        preflight_query = (
+            f"SELECT MIN(u.{oid_col}) AS min_oid, "
+            f"MAX(u.{oid_col}) AS max_oid, "
+            "COUNT(*) AS n_rows "
+            f"FROM {user_table_ref} AS u"
+        )
+        preflight_job = self.euclid.launch_job(preflight_query)
+        preflight_result = preflight_job.get_results()
+        if preflight_result is None or len(preflight_result) == 0:
+            raise RuntimeError(f"Could not determine row count for remote table {user_table_ref}")
+
+        def _to_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            if hasattr(value, 'item'):
+                value = value.item()
+            try:
+                return int(value)
+            except Exception:
+                return None
+
+        table_rows = _to_int(preflight_result['n_rows'][0]) or 0
+        min_oid = _to_int(preflight_result['min_oid'][0])
+        max_oid = _to_int(preflight_result['max_oid'][0])
+        effective_rows = min(table_rows, int(max_sources)) if max_sources is not None else table_rows
+
+        logger.info(
+            "User table preflight: n_rows=%d, min_oid=%s, max_oid=%s",
+            table_rows,
+            str(min_oid),
+            str(max_oid),
+        )
+
+        chunk_threshold = 2_000_000
+        chunk_size = 500_000
+        use_chunked = effective_rows >= chunk_threshold
+        logger.info(
+            "User-table async mode decision: effective_rows=%d, threshold=%d -> %s",
+            effective_rows,
+            chunk_threshold,
+            "chunked async" if use_chunked else "single async query",
+        )
+
+        def _build_remote_query(
+            row_filter: Optional[str] = None,
+            top_limit: Optional[int] = None,
+        ) -> str:
+            top_clause = f"TOP {int(top_limit)} " if top_limit is not None else ""
+            where_clause = f"WHERE {row_filter} " if row_filter else ""
+            if want_oid:
+                return (
+                    f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
+                    f"FROM {user_table_ref} AS u "
+                    f"JOIN {mer_table} AS m ON u.{user_id_col} = m.object_id "
+                    f"{where_clause}"
+                    f"ORDER BY u.{order_col}"
+                )
+            return (
                 f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
                 f"FROM {user_table_ref} AS u "
                 f"JOIN {mer_table} AS m "
                 f"ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg} "
-                f"ORDER BY u.{ra_col}"
+                f"{where_clause}"
+                f"ORDER BY u.{order_col}"
             )
 
+        if use_chunked:
+            if output_file is None:
+                raise ValueError(
+                    "output_file must be provided for automatic chunked user-table crossmatch."
+                )
+            if min_oid is None or max_oid is None:
+                raise RuntimeError(
+                    f"Could not determine OID range ({oid_col}) for chunked query on {user_table_ref}."
+                )
+
+            output_path = Path(output_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            chunk_suffix = output_path.suffix or ".fits"
+            manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
+
+            oid_ranges = [
+                (start_oid, min(start_oid + chunk_size, max_oid + 1))
+                for start_oid in range(min_oid, max_oid + 1, chunk_size)
+            ]
+            logger.info(
+                "Chunked user-table async mode enabled: %d chunks, chunk_size=%d (OID range windows)",
+                len(oid_ranges),
+                chunk_size,
+            )
+
+            manifest: Dict[str, Any] = {
+                'type': 'euclidkit_crossmatch_remote_async_chunked',
+                'environment': self.environment,
+                'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+                'user_table': user_table_ref,
+                'mer_table': mer_table,
+                'oid_column': oid_col,
+                'n_rows_detected': table_rows,
+                'n_rows_effective': effective_rows,
+                'chunk_threshold': chunk_threshold,
+                'chunk_size': chunk_size,
+                'max_sources': int(max_sources) if max_sources is not None else None,
+                'min_oid': min_oid,
+                'max_oid': max_oid,
+                'chunks': [],
+            }
+
+            part_files: List[Path] = []
+            remaining = int(max_sources) if max_sources is not None else None
+
+            for idx, (start_oid, end_oid) in enumerate(oid_ranges, 1):
+                if remaining is not None and remaining <= 0:
+                    logger.info("Reached max_sources limit during chunked execution; stopping at chunk %d", idx)
+                    break
+
+                part_path = output_path.with_name(
+                    f"{output_path.stem}_part_{idx:04d}{chunk_suffix}"
+                )
+                row_filter = f"u.{oid_col} >= {start_oid} AND u.{oid_col} < {end_oid}"
+                top_limit = min(chunk_size, remaining) if remaining is not None else None
+                query = _build_remote_query(row_filter=row_filter, top_limit=top_limit)
+
+                logger.info(
+                    "Running chunk %d/%d: oid_range=[%d,%d), top_limit=%s",
+                    idx,
+                    len(oid_ranges),
+                    start_oid,
+                    end_oid,
+                    str(top_limit),
+                )
+
+                job_id = None
+                chunk_rows = 0
+                status = 'FAILED'
+                error_msg = None
+                try:
+                    job = self.euclid.launch_job_async(query)
+                    job_id = getattr(job, 'jobid', None)
+                    chunk_result = job.get_results()
+                    chunk_rows = len(chunk_result) if chunk_result is not None else 0
+                    save_table(chunk_result, part_path)
+                    self._delete_async_job(job_id)
+                    part_files.append(part_path)
+                    if remaining is not None:
+                        remaining -= chunk_rows
+                    status = 'COMPLETED'
+                    logger.info(
+                        "Chunk %d completed: rows=%d, output=%s",
+                        idx,
+                        chunk_rows,
+                        part_path,
+                    )
+                except Exception as exc:
+                    error_msg = str(exc)
+                    logger.error("Chunk %d failed: %s", idx, error_msg)
+                    manifest['chunks'].append({
+                        'index': idx,
+                        'oid_start': start_oid,
+                        'oid_end': end_oid,
+                        'query': query,
+                        'job_id': job_id,
+                        'status': status,
+                        'rows': chunk_rows,
+                        'file': str(part_path),
+                        'error': error_msg,
+                    })
+                    with open(manifest_path, 'w', encoding='utf-8') as fh:
+                        json.dump(manifest, fh, indent=2)
+                    raise
+
+                manifest['chunks'].append({
+                    'index': idx,
+                    'oid_start': start_oid,
+                    'oid_end': end_oid,
+                    'query': query,
+                    'job_id': job_id,
+                    'status': status,
+                    'rows': chunk_rows,
+                    'file': str(part_path),
+                    'error': error_msg,
+                })
+                with open(manifest_path, 'w', encoding='utf-8') as fh:
+                    json.dump(manifest, fh, indent=2)
+
+            if part_files:
+                merge_tables = [load_table(p) for p in part_files]
+                final_result = merge_tables[0] if len(merge_tables) == 1 else vstack(merge_tables)
+            else:
+                final_result = Table()
+
+            save_table(final_result, output_path)
+            logger.info(
+                "Merged %d chunk files into %s (final rows=%d)",
+                len(manifest['chunks']),
+                output_path,
+                len(final_result),
+            )
+            logger.info("Chunk manifest saved to %s", manifest_path)
+            logger.info("Chunked user-table crossmatch final merged rows: %d", len(final_result))
+
+            if full_async:
+                return {
+                    'type': 'euclidkit_crossmatch_remote_async_chunked',
+                    'environment': self.environment,
+                    'results_downloaded': True,
+                    'result_row_count': len(final_result),
+                    'chunk_count': len(manifest['chunks']),
+                    'chunk_size': chunk_size,
+                    'output_file': str(output_path),
+                    'manifest_file': str(manifest_path),
+                    'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
+                }
+            return final_result
+
+        query = _build_remote_query(top_limit=max_sources)
+        logger.info("Running single async query for user-table crossmatch")
+        job = self.euclid.launch_job_async(query)
+        result = job.get_results()
+        job_id = getattr(job, 'jobid', None)
+
+        if output_file:
+            save_table(result, output_file)
+            logger.info("Saved async crossmatch results to %s", output_file)
+            self._delete_async_job(job_id)
+
         if full_async:
-            job = self.euclid.launch_job_async(query)
-            result = job.get_results()
-            if output_file:
-                save_table(result, output_file)
-                logger.info(f"Saved async crossmatch results to {output_file}")
             return {
                 'type': 'euclidkit_crossmatch_remote_async',
                 'environment': self.environment,
-                'job_id': getattr(job, 'jobid', None),
+                'job_id': job_id,
                 'results_downloaded': True,
                 'result_row_count': len(result) if result is not None else 0,
                 'output_file': str(output_file) if output_file else None,
                 'query': query,
             }
 
-        job = self.euclid.launch_job(query)
-        result = job.get_results()
-        if output_file:
-            save_table(result, output_file)
-            logger.info(f"Saved crossmatch results to {output_file}")
         return result
     
     def _get_mer_table_name(self, idr_field: Optional[str] = None) -> str:
@@ -1095,6 +1347,18 @@ class EuclidArchive:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as fh:
             json.dump(job_info, fh, indent=2)
+
+    def _delete_async_job(self, job_id: Optional[str]) -> bool:
+        """Best-effort deletion of an async TAP job by ID."""
+        if not job_id:
+            return False
+        try:
+            self.euclid.remove_jobs([job_id])
+            logger.info("Deleted async TAP job: %s", job_id)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to delete async TAP job %s: %s", job_id, exc)
+            return False
     
     def _query_spectra_batch(self, batch: Table, idr_field: Optional[str] = None) -> Table:
         """Query spectra for a batch of object IDs."""

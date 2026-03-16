@@ -130,7 +130,7 @@ euclidkit crossmatch \
 
 # Crossmatch an already-uploaded archive user table (no local upload needed)
 euclidkit crossmatch \
-    --user-table-name bright_spectab_wide_north \
+    --user-table-name my_table \
     --output crossmatch_results.fits \
     --match-mode object-id \
     --environment IDR \
