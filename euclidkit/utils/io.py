@@ -63,6 +63,11 @@ def load_table(file_path: Union[str, Path], **kwargs) -> Table:
             df = pd.read_csv(file_path, **kwargs)
             table = Table.from_pandas(df)
             logger.info(f"Loaded CSV table with {len(table)} rows from {file_path}")
+
+        elif suffix == '.parquet':
+            df = pd.read_parquet(file_path, **kwargs)
+            table = Table.from_pandas(df)
+            logger.info(f"Loaded Parquet table with {len(table)} rows from {file_path}")
             
         elif suffix in ['.fits', '.fit']:
             table = Table.read(file_path, format='fits', **kwargs)
@@ -118,6 +123,7 @@ def save_table(
         suffix = file_path.suffix.lower()
         format_map = {
             '.csv': 'ascii.csv',
+            '.parquet': 'parquet',
             '.fits': 'fits',
             '.fit': 'fits',
             '.vot': 'votable',
@@ -127,7 +133,10 @@ def save_table(
         format = format_map.get(suffix, 'fits')  # Default to FITS
     
     try:
-        table.write(file_path, format=format, overwrite=overwrite, **kwargs)
+        if format == 'parquet':
+            table.to_pandas().to_parquet(file_path, **kwargs)
+        else:
+            table.write(file_path, format=format, overwrite=overwrite, **kwargs)
         logger.info(f"Saved table with {len(table)} rows to {file_path}")
         
     except Exception as e:

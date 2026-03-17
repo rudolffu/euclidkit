@@ -52,6 +52,19 @@ class TestLoadSaveTable:
         finally:
             os.unlink(f.name)
 
+    def test_load_table_parquet(self):
+        """Test loading Parquet files."""
+        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+            self.sample_table.to_pandas().to_parquet(f.name)
+
+        try:
+            loaded_table = load_table(f.name)
+            assert isinstance(loaded_table, Table)
+            assert len(loaded_table) == 3
+            assert 'ra' in loaded_table.colnames
+        finally:
+            os.unlink(f.name)
+
     def test_load_table_votable(self):
         """Test loading VOTable files."""
         with tempfile.NamedTemporaryFile(suffix='.xml', delete=False) as f:
@@ -84,6 +97,16 @@ class TestLoadSaveTable:
             finally:
                 os.unlink(f.name)
 
+        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+            self.sample_table.to_pandas().to_parquet(f.name)
+
+        try:
+            loaded_table = load_table(f.name)
+            assert isinstance(loaded_table, Table)
+            assert len(loaded_table) == 3
+        finally:
+            os.unlink(f.name)
+
     def test_save_table_csv(self):
         """Test saving to CSV format."""
         with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as f:
@@ -111,6 +134,20 @@ class TestLoadSaveTable:
             assert os.path.exists(output_path)
             loaded_table = load_table(output_path)
             assert len(loaded_table) == 3
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+
+    def test_save_table_parquet(self):
+        """Test saving to Parquet format."""
+        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+            output_path = f.name
+
+        try:
+            save_table(self.sample_table, output_path)
+            loaded_table = load_table(output_path)
+            assert len(loaded_table) == 3
+            assert 'object_id' in loaded_table.colnames
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)

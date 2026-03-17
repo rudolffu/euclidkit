@@ -569,14 +569,18 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                 f"Datalink arm selection: lambda_range={lambda_selected}, "
                 f"retrieval_type={retrieval_selected}"
             )
+            source_id_col = compiler._resolve_source_id_column(
+                sources,
+                preferred='source_id',
+            )
             dedup_sources, dedup_stats = compiler.deduplicate_by_source_id(
                 spectra_table=sources,
-                source_id_col='source_id',
+                source_id_col=source_id_col,
             )
             if dedup_stats['duplicate_rows_removed'] > 0:
                 click.echo(
                     "Datalink deduplication: "
-                    f"{dedup_stats['input_rows']} rows -> {dedup_stats['unique_sources']} unique source_id "
+                    f"{dedup_stats['input_rows']} rows -> {dedup_stats['unique_sources']} unique {source_id_col} "
                     f"(removed {dedup_stats['duplicate_rows_removed']} duplicates)"
                 )
             sources_for_datalink = dedup_sources

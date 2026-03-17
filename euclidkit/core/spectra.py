@@ -225,6 +225,21 @@ class SpectrumCompiler:
         return name
 
     @staticmethod
+    def _resolve_source_id_column(
+        table: Table,
+        preferred: str = "source_id",
+    ) -> str:
+        """Resolve the identifier column used for spectrum compilation."""
+        if preferred in table.colnames:
+            return preferred
+        if preferred == "source_id" and "object_id" in table.colnames:
+            logger.info(
+                "Column 'source_id' not found; using 'object_id' as spectrum identifier"
+            )
+            return "object_id"
+        raise ValueError(f"Missing required column: {preferred}")
+
+    @staticmethod
     def deduplicate_by_source_id(
         spectra_table: Table,
         source_id_col: str = "source_id",
@@ -237,8 +252,10 @@ class SpectrumCompiler:
         tuple
             (deduplicated_table, stats)
         """
-        if source_id_col not in spectra_table.colnames:
-            raise ValueError(f"Missing required column: {source_id_col}")
+        source_id_col = SpectrumCompiler._resolve_source_id_column(
+            spectra_table,
+            preferred=source_id_col,
+        )
 
         seen = set()
         keep_indices: List[int] = []
@@ -610,6 +627,11 @@ class SpectrumCompiler:
         """
         output_dir = Path(output_dir)
         ensure_dir(output_dir)
+
+        source_id_col = self._resolve_source_id_column(
+            spectra_table,
+            preferred=source_id_col,
+        )
         
         # Validate input table
         required_cols = [source_id_col, datalabs_path_col, file_name_col, hdu_index_col]
@@ -878,8 +900,10 @@ class SpectrumCompiler:
         output_dir = Path(output_dir)
         ensure_dir(output_dir)
 
-        if source_id_col not in spectra_table.colnames:
-            raise ValueError(f"Missing required column: {source_id_col}")
+        source_id_col = self._resolve_source_id_column(
+            spectra_table,
+            preferred=source_id_col,
+        )
 
         dedup_table, dedup_stats = self.deduplicate_by_source_id(
             spectra_table=spectra_table,
