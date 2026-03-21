@@ -137,6 +137,16 @@ euclidkit crossmatch \
     --idr-field WIDE
 ```
 
+`--full-async` behavior:
+
+- For smaller inputs, euclidkit submits one async TAP job, downloads the result to the requested output file, and then removes the remote job.
+- For large local input tables (`--input`), euclidkit splits the upload into async chunks, saves each chunk to `<output>_part_####.fits`, removes each remote job after the chunk is saved, writes `<output>.manifest.json`, and merges the chunk files into the requested final output.
+- For large archive user tables (`--user-table-name`), euclidkit uses the same on-disk chunking pattern and final merge.
+
+Matching mode recommendation:
+
+- Prefer `--match-mode object-id` whenever the input already contains Euclid `object_id` values, or `source_id` values that should be joined to MER `object_id`. This avoids positional matching and is usually faster and more robust for large tables.
+
 `--max-sources` vs `--async-chunk-size`:
 
 - `--max-sources`: limits how many rows from the input table are processed in total.

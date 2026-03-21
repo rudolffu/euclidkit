@@ -71,6 +71,16 @@ Option semantics:
 - ``--max-sources`` limits total processed rows from the input table.
 - ``--async-chunk-size`` controls rows per async TAP job in ``--full-async`` mode.
 
+``--full-async`` behavior:
+
+- For smaller inputs, ``euclidkit`` submits one async TAP job, downloads the result to the requested output file, and removes the remote job after saving.
+- For large local input tables supplied with ``--input``, ``euclidkit`` splits the upload into async chunks, writes chunk files named ``<output>_part_####.fits``, writes ``<output>.manifest.json``, removes each remote job after its chunk is saved, and merges the chunk files into the requested final output.
+- For large archive user tables supplied with ``--user-table-name``, ``euclidkit`` uses the same chunk-file plus manifest workflow before producing the final merged FITS file.
+
+Matching mode recommendation:
+
+- Prefer ``--match-mode object-id`` whenever the input already contains Euclid ``object_id`` values, or ``source_id`` values that should be joined to MER ``object_id``. This avoids positional matching and is usually faster and more robust for large tables.
+
 query-spectra
 -------------
 

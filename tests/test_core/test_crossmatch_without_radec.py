@@ -114,6 +114,8 @@ def test_crossmatch_sources_full_async(tmp_path):
     fake_job.jobid = 'job-123'
     fake_job.phase = 'QUEUED'
     fake_job.url = 'https://tap/job/job-123'
+    fake_job.remote_results_location = 'https://tap/job/job-123/results'
+    fake_job.get_results.return_value = Table({'object_id': [123], 'mer_ra': [150.0], 'mer_dec': [2.0]})
     submission = {
         'job': fake_job,
         'query': 'SELECT 1',
@@ -121,7 +123,7 @@ def test_crossmatch_sources_full_async(tmp_path):
         'row_count': len(user_table),
     }
 
-    output_path = tmp_path / 'job_info.json'
+    output_path = tmp_path / 'job_info.fits'
 
     with patch.object(arch, '_crossmatch_batch', return_value=submission) as mock_batch:
         job_info = arch.crossmatch_sources(
@@ -137,7 +139,85 @@ def test_crossmatch_sources_full_async(tmp_path):
     assert kwargs['force_async'] is True
     assert kwargs['fetch_results'] is False
     assert job_info['job_id'] == 'job-123'
+    assert job_info['results_downloaded'] is True
+    assert job_info['result_row_count'] == 1
 
-    saved = json.loads(output_path.read_text())
-    assert saved['job_id'] == 'job-123'
-    assert saved['query'] == 'SELECT 1'
+    saved = Table.read(output_path, format='fits')
+    assert len(saved) == 1
+    arch.euclid.remove_jobs.assert_called_once_with(['job-123'])
+
+
+def test_crossmatch_sources_full_async_chunked_persists_and_merges(tmp_path):
+    """Chunked full_async should save chunk files, delete jobs, and merge output."""
+    user_table = Table({
+        'source_id': [1, 2, 3, 4, 5],
+        'ra': [150.0, 151.0, 152.0, 153.0, 154.0],
+        'dec': [2.0, 2.1, 2.2, 2.3, 2.4],
+    })
+    arch = EuclidArchive(environment='PDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+
+    def make_submission(start_value):
+        fake_job = Mock()
+        fake_job.jobid = f'job-{start_value}'
+        fake_job.get_results.return_value = Table({
+            'object_id': [start_value, start_value + 1],
+            'mer_ra': [150.0, 151.0],
+            'mer_dec': [2.0, 2.1],
+        })
+        return {
+            'job': fake_job,
+            'query': f'SELECT {start_value}',
+            'upload_table_name': f'user_batch_{start_value}',
+        }
+
+    submissions = [
+        make_submission(10),
+        make_submission(20),
+        {
+            'job': Mock(
+                jobid='job-30',
+                get_results=Mock(return_value=Table({
+                    'object_id': [30],
+                    'mer_ra': [152.0],
+                    'mer_dec': [2.2],
+                })),
+            ),
+            'query': 'SELECT 30',
+            'upload_table_name': 'user_batch_30',
+        },
+    ]
+
+    output_path = tmp_path / 'merged.fits'
+
+    with patch.object(arch, '_crossmatch_batch', side_effect=submissions) as mock_batch:
+        job_info = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            full_async=True,
+            use_object_id=True,
+            output_file=output_path,
+            async_chunk_size=2,
+        )
+
+    assert mock_batch.call_count == 3
+    assert output_path.exists()
+    manifest_path = tmp_path / 'merged.fits.manifest.json'
+    assert manifest_path.exists()
+    part_files = sorted(tmp_path.glob('merged_part_*.fits'))
+    assert len(part_files) == 3
+
+    merged = Table.read(output_path, format='fits')
+    assert len(merged) == 5
+    assert job_info['result_row_count'] == 5
+    assert job_info['chunk_count'] == 3
+    assert job_info['manifest_file'] == str(manifest_path)
+
+    manifest = json.loads(manifest_path.read_text())
+    assert len(manifest['chunks']) == 3
+    assert [c['status'] for c in manifest['chunks']] == ['COMPLETED', 'COMPLETED', 'COMPLETED']
+
+    arch.euclid.remove_jobs.assert_any_call(['job-10'])
+    arch.euclid.remove_jobs.assert_any_call(['job-20'])
+    arch.euclid.remove_jobs.assert_any_call(['job-30'])

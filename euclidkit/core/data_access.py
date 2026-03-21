@@ -365,12 +365,26 @@ class EuclidArchive:
                     "full_async enabled with %d rows; using chunked async mode with chunk_size=%d",
                     len(user_data), async_chunk_size
                 )
+                output_path = Path(output_file)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                chunk_suffix = output_path.suffix or ".fits"
+                manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
                 batches = [
                     (i, min(i + async_chunk_size, len(user_data)))
                     for i in range(0, len(user_data), async_chunk_size)
                 ]
-                chunk_results = []
-                job_ids = []
+                manifest: Dict[str, Any] = {
+                    'type': 'euclidkit_crossmatch_async_chunked',
+                    'environment': self.environment,
+                    'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+                    'row_count': len(user_data),
+                    'chunk_size': async_chunk_size,
+                    'chunk_count': len(batches),
+                    'idr_field': idr_field.upper() if idr_field else None,
+                    'output_file': str(output_path),
+                    'chunks': [],
+                }
+                part_files: List[Path] = []
                 for idx, (start, end) in enumerate(batches, 1):
                     logger.info("Submitting async chunk %d/%d (%d rows)", idx, len(batches), end - start)
                     batch = user_data[start:end]
@@ -386,37 +400,79 @@ class EuclidArchive:
                     )
                     job = submission.get('job')
                     job_id = getattr(job, 'jobid', None)
-                    if job_id:
-                        job_ids.append(job_id)
-
+                    part_path = output_path.with_name(
+                        f"{output_path.stem}_part_{idx:04d}{chunk_suffix}"
+                    )
+                    chunk_rows = 0
+                    status = 'FAILED'
+                    error_msg = None
                     try:
                         batch_result = job.get_results()
-                        if batch_result is not None and len(batch_result) > 0:
-                            chunk_results.append(batch_result)
+                        chunk_rows = len(batch_result) if batch_result is not None else 0
+                        save_table(batch_result, part_path)
+                        self._delete_async_job(job_id)
+                        part_files.append(part_path)
+                        status = 'COMPLETED'
+                        logger.info(
+                            "Saved async chunk %d/%d (%d rows) to %s",
+                            idx, len(batches), chunk_rows, part_path
+                        )
                     except Exception as exc:
+                        error_msg = str(exc)
                         logger.warning("Failed to fetch async results for chunk %d: %s", idx, exc)
+                        manifest['chunks'].append({
+                            'index': idx,
+                            'row_start': start,
+                            'row_end': end,
+                            'job_id': job_id,
+                            'status': status,
+                            'rows': chunk_rows,
+                            'file': str(part_path),
+                            'query': submission.get('query'),
+                            'error': error_msg,
+                        })
+                        with open(manifest_path, 'w', encoding='utf-8') as fh:
+                            json.dump(manifest, fh, indent=2)
+                        raise
 
-                if chunk_results:
-                    final_result = Table(np.concatenate([r for r in chunk_results]))
+                    manifest['chunks'].append({
+                        'index': idx,
+                        'row_start': start,
+                        'row_end': end,
+                        'job_id': job_id,
+                        'status': status,
+                        'rows': chunk_rows,
+                        'file': str(part_path),
+                        'query': submission.get('query'),
+                        'error': error_msg,
+                    })
+                    with open(manifest_path, 'w', encoding='utf-8') as fh:
+                        json.dump(manifest, fh, indent=2)
+
+                if part_files:
+                    merge_tables = [load_table(p) for p in part_files]
+                    final_result = merge_tables[0] if len(merge_tables) == 1 else vstack(merge_tables)
                 else:
                     final_result = Table()
 
-                save_table(final_result, output_file)
+                save_table(final_result, output_path)
                 logger.info(
                     "Saved merged chunked async results (%d rows) to %s",
-                    len(final_result), output_file
+                    len(final_result), output_path
                 )
+                logger.info("Chunk manifest saved to %s", manifest_path)
                 return {
                     'type': 'euclidkit_crossmatch_async_chunked',
                     'environment': self.environment,
-                    'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+                    'submitted_at_utc': manifest['submitted_at_utc'],
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
                     'chunk_count': len(batches),
-                    'job_ids': job_ids,
+                    'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
                     'results_downloaded': True,
                     'result_row_count': len(final_result),
-                    'output_file': str(output_file),
+                    'output_file': str(output_path),
+                    'manifest_file': str(manifest_path),
                     'idr_field': idr_field.upper() if idr_field else None,
                 }
 
@@ -455,6 +511,7 @@ class EuclidArchive:
                     async_result = job.get_results()
                     if async_result is not None:
                         save_table(async_result, output_file)
+                        self._delete_async_job(getattr(job, 'jobid', None))
                         results_downloaded = True
                         result_row_count = len(async_result)
                         logger.info(
