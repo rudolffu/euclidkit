@@ -74,17 +74,19 @@ def test_crossmatch_sources_idr_field_selection(monkeypatch):
     assert third_call_args[4] == 'catalogue.mer_catalogue_deep'
 
 
-def test_crossmatch_sources_idr_wide_deduplicates_primary_mer_table():
-    """IDR WIDE should keep wide_survey rows when wide_mode duplicates object_id."""
-    user_table = Table({'source_id': [123], 'ra': [150.0], 'dec': [2.0]})
+def test_crossmatch_sources_idr_wide_uses_mode_only_for_unmatched_rows():
+    """IDR WIDE should query wide_mode only with rows missing from wide_survey."""
+    user_table = Table({'source_id': [123, 456], 'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
     arch = EuclidArchive(environment='IDR')
     arch.euclid = Mock()
     arch._logged_in = True
+    seen_batches = []
 
     def fake_batch(batch, ra_col, dec_col, radius, mer_table, use_object_id, force_async=False):
+        seen_batches.append((mer_table, list(batch['source_id'])))
         if mer_table.endswith('_survey'):
-            return Table({'object_id': [123], 'mer_ra': [150.0], 'source_table': ['survey']})
-        return Table({'object_id': [123], 'mer_ra': [151.0], 'source_table': ['mode']})
+            return Table({'source_id': [123], 'object_id': [123], 'mer_ra': [150.0], 'source_table': ['survey']})
+        return Table({'source_id': [456], 'object_id': [456], 'mer_ra': [151.0], 'source_table': ['mode']})
 
     with patch.object(arch, '_crossmatch_batch', side_effect=fake_batch):
         out = arch.crossmatch_sources(
@@ -94,8 +96,12 @@ def test_crossmatch_sources_idr_wide_deduplicates_primary_mer_table():
             idr_field='WIDE',
         )
 
-    assert len(out) == 1
-    assert out['source_table'][0] == 'survey'
+    assert len(out) == 2
+    assert list(out['source_table']) == ['survey', 'mode']
+    assert seen_batches == [
+        ('catalogue.mer_catalogue_wide_survey', [123, 456]),
+        ('catalogue.mer_catalogue_wide_mode', [456]),
+    ]
 
 
 def test_spatial_crossmatch_contains_expression(monkeypatch):

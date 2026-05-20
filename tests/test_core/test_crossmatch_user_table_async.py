@@ -47,3 +47,5 @@ def test_crossmatch_user_table_uses_async_by_default():
     queries = [call.args[0] for call in archive.euclid.launch_job_async.call_args_list]
     assert "JOIN catalogue.mer_catalogue_wide_survey AS m" in queries[0]
     assert "JOIN catalogue.mer_catalogue_wide_mode AS m" in queries[1]
+    assert "NOT EXISTS" in queries[1]
+    assert "catalogue.mer_catalogue_wide_survey AS s" in queries[1]

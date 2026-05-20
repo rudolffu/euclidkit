@@ -370,32 +370,64 @@ class CutoutGenerator:
 
         # Upload object IDs and perform a server-side join, matching data_access.py pattern.
         upload_df = df[['object_id']].drop_duplicates().copy()
-        upload_table = Table.from_pandas(upload_df)
-        with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
-            upload_table.write(tmp_file.name, format='votable', overwrite=True)
-            tmp_name = tmp_file.name
-
-        upload_name = f"user_cutana_oid_{np.random.randint(10000, 99999)}"
         try:
+            def _query_ids(ids_df: pd.DataFrame, table_name: str) -> Table:
+                upload_table = Table.from_pandas(ids_df)
+                with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
+                    upload_table.write(tmp_file.name, format='votable', overwrite=True)
+                    tmp_name = tmp_file.name
+
+                upload_name = f"user_cutana_oid_{np.random.randint(10000, 99999)}"
+                try:
+                    query = f"""
+                    SELECT u.object_id, m.right_ascension, m.declination, m.segmentation_map_id
+                    FROM TAP_UPLOAD.{upload_name} AS u
+                    JOIN {table_name} AS m ON u.object_id = m.object_id
+                    ORDER BY u.object_id
+                    """
+                    job = self.archive.euclid.launch_job_async(
+                        query,
+                        upload_resource=tmp_name,
+                        upload_table_name=upload_name,
+                    )
+                    if job is None:
+                        logger.error("Failed to resolve object_ids to MER metadata from %s", table_name)
+                        return Table()
+                    result = job.get_results()
+                    return result if result is not None else Table()
+                finally:
+                    if os.path.exists(tmp_name):
+                        os.unlink(tmp_name)
+
             result_tables = []
-            for table_name in table_names:
-                query = f"""
-                SELECT u.object_id, m.right_ascension, m.declination, m.segmentation_map_id
-                FROM TAP_UPLOAD.{upload_name} AS u
-                JOIN {table_name} AS m ON u.object_id = m.object_id
-                ORDER BY u.object_id
-                """
-                job = self.archive.euclid.launch_job_async(
-                    query,
-                    upload_resource=tmp_name,
-                    upload_table_name=upload_name,
+            if (
+                len(table_names) == 2
+                and table_names[0] == 'catalogue.mer_catalogue_wide_survey'
+                and table_names[1] == 'catalogue.mer_catalogue_wide_mode'
+            ):
+                survey_result = _query_ids(upload_df, table_names[0])
+                if survey_result is not None and len(survey_result) > 0:
+                    result_tables.append(survey_result)
+                matched_ids = set()
+                if survey_result is not None and 'object_id' in survey_result.colnames:
+                    matched_ids = {str(value) for value in survey_result['object_id']}
+                unmatched_df = upload_df[
+                    ~upload_df['object_id'].astype(str).isin(matched_ids)
+                ].copy()
+                logger.info(
+                    "IDR WIDE Cutana fallback: %d/%d object_ids unmatched in wide_survey",
+                    len(unmatched_df),
+                    len(upload_df),
                 )
-                if job is None:
-                    logger.error("Failed to resolve object_ids to MER metadata from %s", table_name)
-                    continue
-                result = job.get_results()
-                if result is not None and len(result) > 0:
-                    result_tables.append(result)
+                if len(unmatched_df) > 0:
+                    mode_result = _query_ids(unmatched_df, table_names[1])
+                    if mode_result is not None and len(mode_result) > 0:
+                        result_tables.append(mode_result)
+            else:
+                for table_name in table_names:
+                    result = _query_ids(upload_df, table_name)
+                    if result is not None and len(result) > 0:
+                        result_tables.append(result)
 
             coords_table = self.archive._combine_mer_results(result_tables)
             if len(coords_table) == 0:
@@ -426,9 +458,6 @@ class CutoutGenerator:
         except Exception as e:
             logger.error(f"Error resolving MER metadata: {e}")
             return pd.DataFrame()
-        finally:
-            if os.path.exists(tmp_name):
-                os.unlink(tmp_name)
 
     def _lookup_mer_source_info_by_position(
         self,

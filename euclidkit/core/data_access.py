@@ -314,6 +314,7 @@ class EuclidArchive:
         # Determine MER table name(s) based on environment. IDR WIDE spans two
         # MER tables; explicit mer_table overrides keep single-table behavior.
         mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(idr_field=idr_field)
+        use_wide_fallback = self._uses_idr_wide_fallback(mer_tables)
 
         # Decide matching mode
         user_cols = list(user_data.colnames)
@@ -378,7 +379,6 @@ class EuclidArchive:
                     (i, min(i + async_chunk_size, len(user_data)))
                     for i in range(0, len(user_data), async_chunk_size)
                 ]
-                total_queries = len(batches) * len(mer_tables)
                 manifest: Dict[str, Any] = {
                     'type': 'euclidkit_crossmatch_async_chunked',
                     'environment': self.environment,
@@ -386,8 +386,9 @@ class EuclidArchive:
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
                     'chunk_count': len(batches),
-                    'query_count': total_queries,
+                    'query_count': 0,
                     'mer_tables': mer_tables,
+                    'wide_fallback_mode': use_wide_fallback,
                     'idr_field': idr_field.upper() if idr_field else None,
                     'output_file': str(output_path),
                     'chunks': [],
@@ -397,7 +398,16 @@ class EuclidArchive:
                 for idx, (start, end) in enumerate(batches, 1):
                     logger.info("Submitting async chunk %d/%d (%d rows)", idx, len(batches), end - start)
                     batch = user_data[start:end]
-                    for table_name in mer_tables:
+                    tables_for_chunk = [mer_tables[0]]
+                    if use_wide_fallback:
+                        logger.info(
+                            "IDR WIDE fallback chunk %d: querying wide_survey first",
+                            idx,
+                        )
+                    else:
+                        tables_for_chunk = mer_tables
+
+                    for table_name in tables_for_chunk:
                         query_idx += 1
                         submission = self._crossmatch_batch(
                             batch,
@@ -425,8 +435,8 @@ class EuclidArchive:
                             part_files.append(part_path)
                             status = 'COMPLETED'
                             logger.info(
-                                "Saved async chunk %d/%d for %s (%d rows) to %s",
-                                query_idx, total_queries, table_name, chunk_rows, part_path
+                                "Saved async chunk %d for %s (%d rows) to %s",
+                                query_idx, table_name, chunk_rows, part_path
                             )
                         except Exception as exc:
                             error_msg = str(exc)
@@ -457,6 +467,106 @@ class EuclidArchive:
                             'row_start': start,
                             'row_end': end,
                             'mer_table': table_name,
+                            'stage': 'wide_survey' if use_wide_fallback else 'single_table',
+                            'input_rows': len(batch),
+                            'unmatched_rows': None,
+                            'job_id': job_id,
+                            'status': status,
+                            'rows': chunk_rows,
+                            'file': str(part_path),
+                            'query': submission.get('query'),
+                            'error': error_msg,
+                        })
+                        with open(manifest_path, 'w', encoding='utf-8') as fh:
+                            json.dump(manifest, fh, indent=2)
+
+                    if use_wide_fallback:
+                        survey_result = load_table(part_files[-1]) if part_files else Table()
+                        unmatched_batch = self._filter_unmatched_input_rows(
+                            batch,
+                            survey_result,
+                            use_object_id=want_oid,
+                            ra_col=ra_col,
+                            dec_col=dec_col,
+                        )
+                        logger.info(
+                            "IDR WIDE fallback chunk %d: %d/%d rows unmatched in wide_survey",
+                            idx,
+                            len(unmatched_batch),
+                            len(batch),
+                        )
+                        if len(unmatched_batch) == 0:
+                            manifest['chunks'][-1]['unmatched_rows'] = 0
+                            with open(manifest_path, 'w', encoding='utf-8') as fh:
+                                json.dump(manifest, fh, indent=2)
+                            continue
+
+                        query_idx += 1
+                        mode_table = mer_tables[1]
+                        submission = self._crossmatch_batch(
+                            unmatched_batch,
+                            ra_col,
+                            dec_col,
+                            radius,
+                            mode_table,
+                            use_object_id,
+                            force_async=True,
+                            fetch_results=False,
+                        )
+                        job = submission.get('job')
+                        job_id = getattr(job, 'jobid', None)
+                        part_path = output_path.with_name(
+                            f"{output_path.stem}_part_{query_idx:04d}{chunk_suffix}"
+                        )
+                        chunk_rows = 0
+                        status = 'FAILED'
+                        error_msg = None
+                        try:
+                            batch_result = job.get_results()
+                            chunk_rows = len(batch_result) if batch_result is not None else 0
+                            save_table(batch_result, part_path)
+                            self._delete_async_job(job_id)
+                            part_files.append(part_path)
+                            status = 'COMPLETED'
+                            logger.info(
+                                "Saved IDR WIDE fallback chunk %d for %s (%d rows) to %s",
+                                idx, mode_table, chunk_rows, part_path
+                            )
+                        except Exception as exc:
+                            error_msg = str(exc)
+                            logger.warning(
+                                "Failed to fetch async fallback results for chunk %d table %s: %s",
+                                idx, mode_table, exc,
+                            )
+                            manifest['chunks'].append({
+                                'index': query_idx,
+                                'batch_index': idx,
+                                'row_start': start,
+                                'row_end': end,
+                                'mer_table': mode_table,
+                                'stage': 'wide_mode_unmatched',
+                                'input_rows': len(unmatched_batch),
+                                'unmatched_rows': len(unmatched_batch),
+                                'job_id': job_id,
+                                'status': status,
+                                'rows': chunk_rows,
+                                'file': str(part_path),
+                                'query': submission.get('query'),
+                                'error': error_msg,
+                            })
+                            with open(manifest_path, 'w', encoding='utf-8') as fh:
+                                json.dump(manifest, fh, indent=2)
+                            raise
+
+                        manifest['chunks'].append({
+                            'index': query_idx,
+                            'batch_index': idx,
+                            'row_start': start,
+                            'row_end': end,
+                            'mer_table': mode_table,
+                            'stage': 'wide_mode_unmatched',
+                            'input_rows': len(unmatched_batch),
+                            'unmatched_rows': len(unmatched_batch),
                             'job_id': job_id,
                             'status': status,
                             'rows': chunk_rows,
@@ -472,6 +582,9 @@ class EuclidArchive:
                     final_result = self._combine_mer_results(merge_tables)
                 else:
                     final_result = Table()
+                manifest['query_count'] = len(manifest['chunks'])
+                with open(manifest_path, 'w', encoding='utf-8') as fh:
+                    json.dump(manifest, fh, indent=2)
 
                 save_table(final_result, output_path)
                 logger.info(
@@ -486,7 +599,7 @@ class EuclidArchive:
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
                     'chunk_count': len(batches),
-                    'query_count': total_queries,
+                    'query_count': len(manifest['chunks']),
                     'mer_tables': mer_tables,
                     'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
                     'results_downloaded': True,
@@ -500,7 +613,8 @@ class EuclidArchive:
             async_results = []
             download_errors = []
             successful_job_ids = []
-            for table_name in mer_tables:
+            tables_to_query = [mer_tables[0]] if use_wide_fallback else mer_tables
+            for table_name in tables_to_query:
                 submission = self._crossmatch_batch(
                     user_data,
                     ra_col,
@@ -544,6 +658,64 @@ class EuclidArchive:
                         "Async job submitted for %s but result download failed: %s",
                         table_name, exc,
                     )
+
+            if use_wide_fallback and async_results:
+                unmatched_data = self._filter_unmatched_input_rows(
+                    user_data,
+                    async_results[0],
+                    use_object_id=want_oid,
+                    ra_col=ra_col,
+                    dec_col=dec_col,
+                )
+                logger.info(
+                    "IDR WIDE fallback async mode: %d/%d rows unmatched in wide_survey",
+                    len(unmatched_data),
+                    len(user_data),
+                )
+                if len(unmatched_data) > 0:
+                    table_name = mer_tables[1]
+                    submission = self._crossmatch_batch(
+                        unmatched_data,
+                        ra_col,
+                        dec_col,
+                        radius,
+                        table_name,
+                        use_object_id,
+                        force_async=True,
+                        fetch_results=False,
+                    )
+                    job_info = self._build_async_job_info(
+                        submission,
+                        mer_table=table_name,
+                        radius=radius,
+                        ra_col=ra_col,
+                        dec_col=dec_col,
+                        idr_field=idr_field,
+                        row_count=len(unmatched_data),
+                    )
+                    job_infos.append(job_info)
+                    job = submission.get('job')
+                    try:
+                        logger.info(
+                            "Attempting to download IDR WIDE fallback async job %s against %s",
+                            getattr(job, 'jobid', None),
+                            table_name,
+                        )
+                        async_result = job.get_results()
+                        if async_result is not None:
+                            async_results.append(async_result)
+                            successful_job_ids.append(getattr(job, 'jobid', None))
+                            logger.info(
+                                "Downloaded fallback async results (%d rows) from %s",
+                                len(async_result),
+                                table_name,
+                            )
+                    except Exception as exc:
+                        download_errors.append(str(exc))
+                        logger.warning(
+                            "Async fallback job submitted for %s but result download failed: %s",
+                            table_name, exc,
+                        )
 
             final_result = self._combine_mer_results(async_results)
             results_downloaded = len(download_errors) == 0
@@ -611,7 +783,9 @@ class EuclidArchive:
             batch = user_data[start:end]
             logger.info(f"Processing batch {idx}/{total_batches}")
             
-            for table_name in mer_tables:
+            tables_for_batch = [mer_tables[0]] if use_wide_fallback else mer_tables
+            survey_result = Table()
+            for table_name in tables_for_batch:
                 batch_result = self._crossmatch_batch(
                     batch,
                     ra_col,
@@ -621,9 +795,39 @@ class EuclidArchive:
                     use_object_id,
                     force_async=use_async_batches,
                 )
+                if use_wide_fallback:
+                    survey_result = batch_result
                 
                 if len(batch_result) > 0:
                     crossmatch_results.append(batch_result)
+
+            if use_wide_fallback:
+                unmatched_batch = self._filter_unmatched_input_rows(
+                    batch,
+                    survey_result,
+                    use_object_id=want_oid,
+                    ra_col=ra_col,
+                    dec_col=dec_col,
+                )
+                logger.info(
+                    "IDR WIDE fallback batch %d/%d: %d/%d rows unmatched in wide_survey",
+                    idx,
+                    total_batches,
+                    len(unmatched_batch),
+                    len(batch),
+                )
+                if len(unmatched_batch) > 0:
+                    mode_result = self._crossmatch_batch(
+                        unmatched_batch,
+                        ra_col,
+                        dec_col,
+                        radius,
+                        mer_tables[1],
+                        use_object_id,
+                        force_async=use_async_batches,
+                    )
+                    if len(mode_result) > 0:
+                        crossmatch_results.append(mode_result)
         
         if crossmatch_results:
             final_result = self._combine_mer_results(crossmatch_results)
@@ -838,6 +1042,7 @@ class EuclidArchive:
             self.login()
 
         mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(idr_field=idr_field)
+        use_wide_fallback = self._uses_idr_wide_fallback(mer_tables)
 
         user_table_ref = self._resolve_user_table_reference(user_table_name)
         user_cols = self._get_remote_table_columns(user_table_ref)
@@ -998,9 +1203,24 @@ class EuclidArchive:
             table_name: str,
             row_filter: Optional[str] = None,
             top_limit: Optional[int] = None,
+            exclude_survey_matches: bool = False,
         ) -> str:
             top_clause = f"TOP {int(top_limit)} " if top_limit is not None else ""
-            where_clause = f"WHERE {row_filter} " if row_filter else ""
+            filters = []
+            if row_filter:
+                filters.append(f"({row_filter})")
+            if exclude_survey_matches:
+                filters.append(
+                    self._wide_fallback_exclusion_filter(
+                        mer_tables[0],
+                        want_oid=want_oid,
+                        user_id_col=user_id_col if want_oid else None,
+                        ra_col=ra_col if not want_oid else None,
+                        dec_col=dec_col if not want_oid else None,
+                        radius_deg=radius_deg if not want_oid else None,
+                    )
+                )
+            where_clause = f"WHERE {' AND '.join(filters)} " if filters else ""
             if want_oid:
                 return (
                     f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
@@ -1050,6 +1270,7 @@ class EuclidArchive:
                 'user_table': user_table_ref,
                 'mer_table': mer_tables[0] if len(mer_tables) == 1 else None,
                 'mer_tables': mer_tables,
+                'wide_fallback_mode': use_wide_fallback,
                 'oid_column': oid_col,
                 'n_rows_detected': table_rows,
                 'n_rows_effective': effective_rows,
@@ -1067,7 +1288,8 @@ class EuclidArchive:
             for idx, (start_oid, end_oid) in enumerate(oid_ranges, 1):
                 row_filter = f"u.{oid_col} >= {start_oid} AND u.{oid_col} < {end_oid}"
                 top_limit = int(max_sources) if max_sources is not None else None
-                for table_name in mer_tables:
+                for table_index, table_name in enumerate(mer_tables):
+                    exclude_survey_matches = use_wide_fallback and table_index == 1
                     query_idx += 1
                     part_path = output_path.with_name(
                         f"{output_path.stem}_part_{query_idx:04d}{chunk_suffix}"
@@ -1076,6 +1298,7 @@ class EuclidArchive:
                         table_name,
                         row_filter=row_filter,
                         top_limit=top_limit,
+                        exclude_survey_matches=exclude_survey_matches,
                     )
 
                     logger.info(
@@ -1116,6 +1339,9 @@ class EuclidArchive:
                             'oid_start': start_oid,
                             'oid_end': end_oid,
                             'mer_table': table_name,
+                            'stage': 'wide_mode_unmatched' if exclude_survey_matches else (
+                                'wide_survey' if use_wide_fallback else 'single_table'
+                            ),
                             'query': query,
                             'job_id': job_id,
                             'status': status,
@@ -1133,6 +1359,9 @@ class EuclidArchive:
                         'oid_start': start_oid,
                         'oid_end': end_oid,
                         'mer_table': table_name,
+                        'stage': 'wide_mode_unmatched' if exclude_survey_matches else (
+                            'wide_survey' if use_wide_fallback else 'single_table'
+                        ),
                         'query': query,
                         'job_id': job_id,
                         'status': status,
@@ -1178,8 +1407,13 @@ class EuclidArchive:
         job_ids = []
         queries = []
         successful_job_ids = []
-        for table_name in mer_tables:
-            query = _build_remote_query(table_name, top_limit=max_sources)
+        for table_index, table_name in enumerate(mer_tables):
+            exclude_survey_matches = use_wide_fallback and table_index == 1
+            query = _build_remote_query(
+                table_name,
+                top_limit=max_sources,
+                exclude_survey_matches=exclude_survey_matches,
+            )
             queries.append(query)
             logger.info("Running single async query for user-table crossmatch against %s", table_name)
             job = self.euclid.launch_job_async(query)
@@ -1241,6 +1475,122 @@ class EuclidArchive:
             'REG': 'catalogue.mer_final_catalog_fits_file_regreproc1_r2'
         }
         return [table_names.get(self.environment, 'catalogue.mer_catalogue')]
+
+    @staticmethod
+    def _uses_idr_wide_fallback(mer_tables: List[str]) -> bool:
+        """Return True when MER tables represent the IDR WIDE survey/mode fallback pair."""
+        return mer_tables == [
+            'catalogue.mer_catalogue_wide_survey',
+            'catalogue.mer_catalogue_wide_mode',
+        ]
+
+    @staticmethod
+    def _value_key(value: Any) -> str:
+        """Normalize scalar table values for robust membership comparisons."""
+        if hasattr(value, 'item'):
+            try:
+                value = value.item()
+            except Exception:
+                pass
+        return str(value)
+
+    def _input_result_match_columns(
+        self,
+        input_cols: List[str],
+        use_object_id: bool,
+        ra_col: str,
+        dec_col: str,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+        """Resolve input/result columns used to identify already matched rows."""
+        if use_object_id:
+            if 'object_id' in input_cols:
+                return 'object_id', 'object_id_user', None, None
+            if 'object_id_euclid' in input_cols:
+                return 'object_id_euclid', 'object_id_euclid', None, None
+            if 'source_id' in input_cols:
+                return 'source_id', 'source_id', None, None
+            return None, None, None, None
+        return None, None, ra_col, dec_col
+
+    def _filter_unmatched_input_rows(
+        self,
+        input_table: Table,
+        result_table: Table,
+        use_object_id: bool,
+        ra_col: str,
+        dec_col: str,
+    ) -> Table:
+        """Return input rows not represented in a MER result table."""
+        if result_table is None or len(result_table) == 0:
+            return input_table.copy()
+
+        input_id_col, result_id_col, input_ra_col, input_dec_col = self._input_result_match_columns(
+            list(input_table.colnames),
+            use_object_id,
+            ra_col,
+            dec_col,
+        )
+
+        if input_id_col and result_id_col and result_id_col in result_table.colnames:
+            matched = {self._value_key(value) for value in result_table[result_id_col]}
+            mask = [self._value_key(value) not in matched for value in input_table[input_id_col]]
+            return input_table[mask]
+
+        if (
+            input_ra_col
+            and input_dec_col
+            and input_ra_col in input_table.colnames
+            and input_dec_col in input_table.colnames
+            and input_ra_col in result_table.colnames
+            and input_dec_col in result_table.colnames
+        ):
+            matched = {
+                (self._value_key(row[input_ra_col]), self._value_key(row[input_dec_col]))
+                for row in result_table
+            }
+            mask = [
+                (
+                    self._value_key(row[input_ra_col]),
+                    self._value_key(row[input_dec_col]),
+                ) not in matched
+                for row in input_table
+            ]
+            return input_table[mask]
+
+        logger.warning(
+            "Could not identify matched input rows from wide_survey result; "
+            "falling back to querying wide_mode with the full batch."
+        )
+        return input_table.copy()
+
+    def _wide_fallback_exclusion_filter(
+        self,
+        survey_table: str,
+        want_oid: bool,
+        user_id_col: Optional[str] = None,
+        ra_col: Optional[str] = None,
+        dec_col: Optional[str] = None,
+        radius_deg: Optional[float] = None,
+    ) -> str:
+        """Build a server-side anti-match predicate against the primary WIDE survey table."""
+        if want_oid:
+            if user_id_col is None:
+                raise ValueError("user_id_col is required for object-id fallback exclusion")
+            return (
+                "NOT EXISTS ("
+                f"SELECT 1 FROM {survey_table} AS s "
+                f"WHERE s.object_id = u.{user_id_col}"
+                ")"
+            )
+
+        if ra_col is None or dec_col is None or radius_deg is None:
+            raise ValueError("ra_col, dec_col, and radius_deg are required for spatial fallback exclusion")
+        return (
+            "NOT EXISTS ("
+            f"SELECT 1 FROM {survey_table} AS s "
+            f"WHERE DISTANCE(u.{ra_col}, u.{dec_col}, s.right_ascension, s.declination) < {radius_deg}"
+            ")"
+        )
 
     @staticmethod
     def _combine_mer_results(tables: List[Table]) -> Table:

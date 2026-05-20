@@ -52,8 +52,8 @@ def test_lookup_mer_source_info_uses_mer_table_selection():
     assert len(resolved) == 2
 
 
-def test_lookup_mer_source_info_queries_both_wide_tables_and_deduplicates():
-    """IDR WIDE Cutana lookup should prefer wide_survey over wide_mode duplicates."""
+def test_lookup_mer_source_info_queries_mode_only_for_unmatched_wide_ids():
+    """IDR WIDE Cutana lookup should use wide_mode only for IDs missing in wide_survey."""
     generator, archive = _build_generator_with_archive()
     archive._get_mer_table_names.return_value = [
         'catalogue.mer_catalogue_wide_survey',
@@ -61,7 +61,7 @@ def test_lookup_mer_source_info_queries_both_wide_tables_and_deduplicates():
     ]
     archive._combine_mer_results.side_effect = EuclidArchive._combine_mer_results
 
-    input_df = pd.DataFrame({'object_id': [100001]})
+    input_df = pd.DataFrame({'object_id': [100001, 100002]})
     survey_result = Table(
         {
             'object_id': ['100001'],
@@ -72,7 +72,7 @@ def test_lookup_mer_source_info_queries_both_wide_tables_and_deduplicates():
     )
     mode_result = Table(
         {
-            'object_id': ['100001'],
+            'object_id': ['100002'],
             'right_ascension': [151.0],
             'declination': [2.1],
             'segmentation_map_id': [9876543210000],
@@ -90,8 +90,8 @@ def test_lookup_mer_source_info_queries_both_wide_tables_and_deduplicates():
     queries = [call.args[0] for call in archive.euclid.launch_job_async.call_args_list]
     assert 'JOIN catalogue.mer_catalogue_wide_survey AS m' in queries[0]
     assert 'JOIN catalogue.mer_catalogue_wide_mode AS m' in queries[1]
-    assert len(resolved) == 1
-    assert resolved['right_ascension'].iloc[0] == 150.0
+    assert len(resolved) == 2
+    assert set(resolved['object_id']) == {'100001', '100002'}
 
 
 def test_generate_cutana_input_prefers_segmentation_shortcut():
