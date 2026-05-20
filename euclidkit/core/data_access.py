@@ -8,7 +8,7 @@ import os
 import logging
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union, Optional, List, Dict, Any, Tuple
 import tempfile
@@ -23,6 +23,11 @@ from euclidkit.config import config
 from euclidkit.utils.io import load_table, save_table
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_timestamp() -> str:
+    """Return an ISO UTC timestamp with the existing trailing-Z format."""
+    return datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
 try:
     import keyring  # type: ignore
@@ -306,9 +311,9 @@ class EuclidArchive:
             user_data = user_data[:max_sources]
             logger.info(f"Limited to {max_sources} sources")
         
-        # Determine MER table name based on environment
-        if mer_table is None:
-            mer_table = self._get_mer_table_name(idr_field=idr_field)
+        # Determine MER table name(s) based on environment. IDR WIDE spans two
+        # MER tables; explicit mer_table overrides keep single-table behavior.
+        mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(idr_field=idr_field)
 
         # Decide matching mode
         user_cols = list(user_data.colnames)
@@ -324,7 +329,7 @@ class EuclidArchive:
         elif use_object_id is True and has_source_id and not (has_oid or has_oid_alt):
             logger.info("use_object_id=True and only source_id present; joining source_id to MER object_id")
 
-        logger.info(f"Using MER table: {mer_table}")
+        logger.info("Using MER table(s): %s", ", ".join(mer_tables))
         if want_oid:
             logger.info(f"Crossmatching {len(user_data)} sources in object-id mode")
         else:
@@ -373,57 +378,85 @@ class EuclidArchive:
                     (i, min(i + async_chunk_size, len(user_data)))
                     for i in range(0, len(user_data), async_chunk_size)
                 ]
+                total_queries = len(batches) * len(mer_tables)
                 manifest: Dict[str, Any] = {
                     'type': 'euclidkit_crossmatch_async_chunked',
                     'environment': self.environment,
-                    'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+                    'submitted_at_utc': _utc_timestamp(),
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
                     'chunk_count': len(batches),
+                    'query_count': total_queries,
+                    'mer_tables': mer_tables,
                     'idr_field': idr_field.upper() if idr_field else None,
                     'output_file': str(output_path),
                     'chunks': [],
                 }
                 part_files: List[Path] = []
+                query_idx = 0
                 for idx, (start, end) in enumerate(batches, 1):
                     logger.info("Submitting async chunk %d/%d (%d rows)", idx, len(batches), end - start)
                     batch = user_data[start:end]
-                    submission = self._crossmatch_batch(
-                        batch,
-                        ra_col,
-                        dec_col,
-                        radius,
-                        mer_table,
-                        use_object_id,
-                        force_async=True,
-                        fetch_results=False,
-                    )
-                    job = submission.get('job')
-                    job_id = getattr(job, 'jobid', None)
-                    part_path = output_path.with_name(
-                        f"{output_path.stem}_part_{idx:04d}{chunk_suffix}"
-                    )
-                    chunk_rows = 0
-                    status = 'FAILED'
-                    error_msg = None
-                    try:
-                        batch_result = job.get_results()
-                        chunk_rows = len(batch_result) if batch_result is not None else 0
-                        save_table(batch_result, part_path)
-                        self._delete_async_job(job_id)
-                        part_files.append(part_path)
-                        status = 'COMPLETED'
-                        logger.info(
-                            "Saved async chunk %d/%d (%d rows) to %s",
-                            idx, len(batches), chunk_rows, part_path
+                    for table_name in mer_tables:
+                        query_idx += 1
+                        submission = self._crossmatch_batch(
+                            batch,
+                            ra_col,
+                            dec_col,
+                            radius,
+                            table_name,
+                            use_object_id,
+                            force_async=True,
+                            fetch_results=False,
                         )
-                    except Exception as exc:
-                        error_msg = str(exc)
-                        logger.warning("Failed to fetch async results for chunk %d: %s", idx, exc)
+                        job = submission.get('job')
+                        job_id = getattr(job, 'jobid', None)
+                        part_path = output_path.with_name(
+                            f"{output_path.stem}_part_{query_idx:04d}{chunk_suffix}"
+                        )
+                        chunk_rows = 0
+                        status = 'FAILED'
+                        error_msg = None
+                        try:
+                            batch_result = job.get_results()
+                            chunk_rows = len(batch_result) if batch_result is not None else 0
+                            save_table(batch_result, part_path)
+                            self._delete_async_job(job_id)
+                            part_files.append(part_path)
+                            status = 'COMPLETED'
+                            logger.info(
+                                "Saved async chunk %d/%d for %s (%d rows) to %s",
+                                query_idx, total_queries, table_name, chunk_rows, part_path
+                            )
+                        except Exception as exc:
+                            error_msg = str(exc)
+                            logger.warning(
+                                "Failed to fetch async results for chunk %d table %s: %s",
+                                idx, table_name, exc,
+                            )
+                            manifest['chunks'].append({
+                                'index': query_idx,
+                                'batch_index': idx,
+                                'row_start': start,
+                                'row_end': end,
+                                'mer_table': table_name,
+                                'job_id': job_id,
+                                'status': status,
+                                'rows': chunk_rows,
+                                'file': str(part_path),
+                                'query': submission.get('query'),
+                                'error': error_msg,
+                            })
+                            with open(manifest_path, 'w', encoding='utf-8') as fh:
+                                json.dump(manifest, fh, indent=2)
+                            raise
+
                         manifest['chunks'].append({
-                            'index': idx,
+                            'index': query_idx,
+                            'batch_index': idx,
                             'row_start': start,
                             'row_end': end,
+                            'mer_table': table_name,
                             'job_id': job_id,
                             'status': status,
                             'rows': chunk_rows,
@@ -433,25 +466,10 @@ class EuclidArchive:
                         })
                         with open(manifest_path, 'w', encoding='utf-8') as fh:
                             json.dump(manifest, fh, indent=2)
-                        raise
-
-                    manifest['chunks'].append({
-                        'index': idx,
-                        'row_start': start,
-                        'row_end': end,
-                        'job_id': job_id,
-                        'status': status,
-                        'rows': chunk_rows,
-                        'file': str(part_path),
-                        'query': submission.get('query'),
-                        'error': error_msg,
-                    })
-                    with open(manifest_path, 'w', encoding='utf-8') as fh:
-                        json.dump(manifest, fh, indent=2)
 
                 if part_files:
                     merge_tables = [load_table(p) for p in part_files]
-                    final_result = merge_tables[0] if len(merge_tables) == 1 else vstack(merge_tables)
+                    final_result = self._combine_mer_results(merge_tables)
                 else:
                     final_result = Table()
 
@@ -468,6 +486,8 @@ class EuclidArchive:
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
                     'chunk_count': len(batches),
+                    'query_count': total_queries,
+                    'mer_tables': mer_tables,
                     'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
                     'results_downloaded': True,
                     'result_row_count': len(final_result),
@@ -476,71 +496,98 @@ class EuclidArchive:
                     'idr_field': idr_field.upper() if idr_field else None,
                 }
 
-            submission = self._crossmatch_batch(
-                user_data,
-                ra_col,
-                dec_col,
-                radius,
-                mer_table,
-                use_object_id,
-                force_async=True,
-                fetch_results=False,
-            )
+            job_infos = []
+            async_results = []
+            download_errors = []
+            successful_job_ids = []
+            for table_name in mer_tables:
+                submission = self._crossmatch_batch(
+                    user_data,
+                    ra_col,
+                    dec_col,
+                    radius,
+                    table_name,
+                    use_object_id,
+                    force_async=True,
+                    fetch_results=False,
+                )
 
-            job_info = self._build_async_job_info(
-                submission,
-                mer_table=mer_table,
-                radius=radius,
-                ra_col=ra_col,
-                dec_col=dec_col,
-                idr_field=idr_field,
-                row_count=len(user_data),
-            )
-            job = submission.get('job')
-            results_downloaded = False
-            result_row_count = None
-            download_error = None
-
-            # Try to fetch async results and write the requested output table.
-            if job is not None:
+                job_info = self._build_async_job_info(
+                    submission,
+                    mer_table=table_name,
+                    radius=radius,
+                    ra_col=ra_col,
+                    dec_col=dec_col,
+                    idr_field=idr_field,
+                    row_count=len(user_data),
+                )
+                job_infos.append(job_info)
+                job = submission.get('job')
                 try:
                     logger.info(
-                        "Attempting to download results for async job %s",
+                        "Attempting to download results for async job %s against %s",
                         getattr(job, 'jobid', None),
+                        table_name,
                     )
                     async_result = job.get_results()
                     if async_result is not None:
-                        save_table(async_result, output_file)
-                        self._delete_async_job(getattr(job, 'jobid', None))
-                        results_downloaded = True
-                        result_row_count = len(async_result)
+                        async_results.append(async_result)
+                        successful_job_ids.append(getattr(job, 'jobid', None))
                         logger.info(
-                            "Downloaded async results (%d rows) to %s",
-                            result_row_count,
-                            output_file,
+                            "Downloaded async results (%d rows) from %s",
+                            len(async_result),
+                            table_name,
                         )
                 except Exception as exc:
-                    download_error = str(exc)
+                    download_errors.append(str(exc))
                     logger.warning(
-                        "Async job submitted but result download failed: %s",
-                        exc,
+                        "Async job submitted for %s but result download failed: %s",
+                        table_name, exc,
                     )
 
-            job_info['results_downloaded'] = results_downloaded
-            job_info['result_row_count'] = result_row_count
-            job_info['download_error'] = download_error
+            final_result = self._combine_mer_results(async_results)
+            results_downloaded = len(download_errors) == 0
+            result_row_count = len(final_result)
+            combined_job_info = {
+                'type': 'euclidkit_crossmatch_async_job',
+                'environment': self.environment,
+                'submitted_at_utc': _utc_timestamp(),
+                'job_id': job_infos[0].get('job_id') if len(job_infos) == 1 else None,
+                'job_ids': [info.get('job_id') for info in job_infos if info.get('job_id')],
+                'row_count': len(user_data),
+                'mer_table': mer_tables[0] if len(mer_tables) == 1 else None,
+                'mer_tables': mer_tables,
+                'radius_arcsec': radius,
+                'ra_column': ra_col,
+                'dec_column': dec_col,
+                'idr_field': idr_field.upper() if idr_field else None,
+                'query': job_infos[0].get('query') if len(job_infos) == 1 else None,
+                'queries': [info.get('query') for info in job_infos],
+                'results_downloaded': results_downloaded,
+                'result_row_count': result_row_count,
+                'download_error': '; '.join(download_errors) if download_errors else None,
+            }
 
-            if not results_downloaded:
+            if results_downloaded:
+                save_table(final_result, output_file)
+                for job_id in successful_job_ids:
+                    self._delete_async_job(job_id)
+                logger.info(
+                    "Downloaded and merged async results (%d rows) to %s",
+                    result_row_count,
+                    output_file,
+                )
+            else:
                 output_path = Path(output_file)
                 if output_path.suffix.lower() == '.json':
                     job_info_path = output_path
                 else:
                     job_info_path = output_path.with_name(output_path.name + '.job.json')
-                self._write_job_info(job_info, job_info_path)
-                job_info['job_info_file'] = str(job_info_path)
+                self._write_job_info(combined_job_info, job_info_path)
+                combined_job_info['job_info_file'] = str(job_info_path)
                 logger.info(f"Saved async job info to {job_info_path}")
 
-            return job_info
+            return combined_job_info
 
         crossmatch_results = []
         batch_size = 1000  # Process in batches
@@ -564,21 +611,22 @@ class EuclidArchive:
             batch = user_data[start:end]
             logger.info(f"Processing batch {idx}/{total_batches}")
             
-            batch_result = self._crossmatch_batch(
-                batch,
-                ra_col,
-                dec_col,
-                radius,
-                mer_table,
-                use_object_id,
-                force_async=use_async_batches,
-            )
-            
-            if len(batch_result) > 0:
-                crossmatch_results.append(batch_result)
+            for table_name in mer_tables:
+                batch_result = self._crossmatch_batch(
+                    batch,
+                    ra_col,
+                    dec_col,
+                    radius,
+                    table_name,
+                    use_object_id,
+                    force_async=use_async_batches,
+                )
+                
+                if len(batch_result) > 0:
+                    crossmatch_results.append(batch_result)
         
         if crossmatch_results:
-            final_result = Table(np.concatenate([r for r in crossmatch_results]))
+            final_result = self._combine_mer_results(crossmatch_results)
         else:
             logger.warning("No crossmatches found")
             return Table()
@@ -789,8 +837,7 @@ class EuclidArchive:
             logger.warning("Not logged in - attempting login with default credentials")
             self.login()
 
-        if mer_table is None:
-            mer_table = self._get_mer_table_name(idr_field=idr_field)
+        mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(idr_field=idr_field)
 
         user_table_ref = self._resolve_user_table_reference(user_table_name)
         user_cols = self._get_remote_table_columns(user_table_ref)
@@ -826,7 +873,7 @@ class EuclidArchive:
             ra_col = ra_use
             dec_col = dec_use
 
-        logger.info(f"Using MER table: {mer_table}")
+        logger.info("Using MER table(s): %s", ", ".join(mer_tables))
         logger.info(f"Using remote user table: {user_table_ref}")
         if want_oid:
             logger.info("Crossmatching remote table in object-id mode")
@@ -948,6 +995,7 @@ class EuclidArchive:
         )
 
         def _build_remote_query(
+            table_name: str,
             row_filter: Optional[str] = None,
             top_limit: Optional[int] = None,
         ) -> str:
@@ -957,14 +1005,14 @@ class EuclidArchive:
                 return (
                     f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
                     f"FROM {user_table_ref} AS u "
-                    f"JOIN {mer_table} AS m ON u.{user_id_col} = m.object_id "
+                    f"JOIN {table_name} AS m ON u.{user_id_col} = m.object_id "
                     f"{where_clause}"
                     f"ORDER BY u.{order_col}"
                 )
             return (
                 f"SELECT {top_clause}u.*, {', '.join(mer_select_parts)} "
                 f"FROM {user_table_ref} AS u "
-                f"JOIN {mer_table} AS m "
+                f"JOIN {table_name} AS m "
                 f"ON DISTANCE(u.{ra_col}, u.{dec_col}, m.right_ascension, m.declination) < {radius_deg} "
                 f"{where_clause}"
                 f"ORDER BY u.{order_col}"
@@ -998,9 +1046,10 @@ class EuclidArchive:
             manifest: Dict[str, Any] = {
                 'type': 'euclidkit_crossmatch_remote_async_chunked',
                 'environment': self.environment,
-                'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+                'submitted_at_utc': _utc_timestamp(),
                 'user_table': user_table_ref,
-                'mer_table': mer_table,
+                'mer_table': mer_tables[0] if len(mer_tables) == 1 else None,
+                'mer_tables': mer_tables,
                 'oid_column': oid_col,
                 'n_rows_detected': table_rows,
                 'n_rows_effective': effective_rows,
@@ -1013,57 +1062,77 @@ class EuclidArchive:
             }
 
             part_files: List[Path] = []
-            remaining = int(max_sources) if max_sources is not None else None
+            query_idx = 0
 
             for idx, (start_oid, end_oid) in enumerate(oid_ranges, 1):
-                if remaining is not None and remaining <= 0:
-                    logger.info("Reached max_sources limit during chunked execution; stopping at chunk %d", idx)
-                    break
-
-                part_path = output_path.with_name(
-                    f"{output_path.stem}_part_{idx:04d}{chunk_suffix}"
-                )
                 row_filter = f"u.{oid_col} >= {start_oid} AND u.{oid_col} < {end_oid}"
-                top_limit = min(chunk_size, remaining) if remaining is not None else None
-                query = _build_remote_query(row_filter=row_filter, top_limit=top_limit)
-
-                logger.info(
-                    "Running chunk %d/%d: oid_range=[%d,%d), top_limit=%s",
-                    idx,
-                    len(oid_ranges),
-                    start_oid,
-                    end_oid,
-                    str(top_limit),
-                )
-
-                job_id = None
-                chunk_rows = 0
-                status = 'FAILED'
-                error_msg = None
-                try:
-                    job = self.euclid.launch_job_async(query)
-                    job_id = getattr(job, 'jobid', None)
-                    chunk_result = job.get_results()
-                    chunk_rows = len(chunk_result) if chunk_result is not None else 0
-                    save_table(chunk_result, part_path)
-                    self._delete_async_job(job_id)
-                    part_files.append(part_path)
-                    if remaining is not None:
-                        remaining -= chunk_rows
-                    status = 'COMPLETED'
-                    logger.info(
-                        "Chunk %d completed: rows=%d, output=%s",
-                        idx,
-                        chunk_rows,
-                        part_path,
+                top_limit = int(max_sources) if max_sources is not None else None
+                for table_name in mer_tables:
+                    query_idx += 1
+                    part_path = output_path.with_name(
+                        f"{output_path.stem}_part_{query_idx:04d}{chunk_suffix}"
                     )
-                except Exception as exc:
-                    error_msg = str(exc)
-                    logger.error("Chunk %d failed: %s", idx, error_msg)
+                    query = _build_remote_query(
+                        table_name,
+                        row_filter=row_filter,
+                        top_limit=top_limit,
+                    )
+
+                    logger.info(
+                        "Running query %d/%d: oid_range=[%d,%d), table=%s, top_limit=%s",
+                        query_idx,
+                        len(oid_ranges) * len(mer_tables),
+                        start_oid,
+                        end_oid,
+                        table_name,
+                        str(top_limit),
+                    )
+
+                    job_id = None
+                    chunk_rows = 0
+                    status = 'FAILED'
+                    error_msg = None
+                    try:
+                        job = self.euclid.launch_job_async(query)
+                        job_id = getattr(job, 'jobid', None)
+                        chunk_result = job.get_results()
+                        chunk_rows = len(chunk_result) if chunk_result is not None else 0
+                        save_table(chunk_result, part_path)
+                        self._delete_async_job(job_id)
+                        part_files.append(part_path)
+                        status = 'COMPLETED'
+                        logger.info(
+                            "Chunk query %d completed: rows=%d, output=%s",
+                            query_idx,
+                            chunk_rows,
+                            part_path,
+                        )
+                    except Exception as exc:
+                        error_msg = str(exc)
+                        logger.error("Chunk query %d failed: %s", query_idx, error_msg)
+                        manifest['chunks'].append({
+                            'index': query_idx,
+                            'oid_chunk_index': idx,
+                            'oid_start': start_oid,
+                            'oid_end': end_oid,
+                            'mer_table': table_name,
+                            'query': query,
+                            'job_id': job_id,
+                            'status': status,
+                            'rows': chunk_rows,
+                            'file': str(part_path),
+                            'error': error_msg,
+                        })
+                        with open(manifest_path, 'w', encoding='utf-8') as fh:
+                            json.dump(manifest, fh, indent=2)
+                        raise
+
                     manifest['chunks'].append({
-                        'index': idx,
+                        'index': query_idx,
+                        'oid_chunk_index': idx,
                         'oid_start': start_oid,
                         'oid_end': end_oid,
+                        'mer_table': table_name,
                         'query': query,
                         'job_id': job_id,
                         'status': status,
@@ -1073,25 +1142,10 @@ class EuclidArchive:
                     })
                     with open(manifest_path, 'w', encoding='utf-8') as fh:
                         json.dump(manifest, fh, indent=2)
-                    raise
-
-                manifest['chunks'].append({
-                    'index': idx,
-                    'oid_start': start_oid,
-                    'oid_end': end_oid,
-                    'query': query,
-                    'job_id': job_id,
-                    'status': status,
-                    'rows': chunk_rows,
-                    'file': str(part_path),
-                    'error': error_msg,
-                })
-                with open(manifest_path, 'w', encoding='utf-8') as fh:
-                    json.dump(manifest, fh, indent=2)
 
             if part_files:
                 merge_tables = [load_table(p) for p in part_files]
-                final_result = merge_tables[0] if len(merge_tables) == 1 else vstack(merge_tables)
+                final_result = self._combine_mer_results(merge_tables)
             else:
                 final_result = Table()
 
@@ -1113,38 +1167,60 @@ class EuclidArchive:
                     'result_row_count': len(final_result),
                     'chunk_count': len(manifest['chunks']),
                     'chunk_size': chunk_size,
+                    'mer_tables': mer_tables,
                     'output_file': str(output_path),
                     'manifest_file': str(manifest_path),
                     'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
                 }
             return final_result
 
-        query = _build_remote_query(top_limit=max_sources)
-        logger.info("Running single async query for user-table crossmatch")
-        job = self.euclid.launch_job_async(query)
-        result = job.get_results()
-        job_id = getattr(job, 'jobid', None)
+        results = []
+        job_ids = []
+        queries = []
+        successful_job_ids = []
+        for table_name in mer_tables:
+            query = _build_remote_query(table_name, top_limit=max_sources)
+            queries.append(query)
+            logger.info("Running single async query for user-table crossmatch against %s", table_name)
+            job = self.euclid.launch_job_async(query)
+            result = job.get_results()
+            job_id = getattr(job, 'jobid', None)
+            if job_id:
+                job_ids.append(job_id)
+                successful_job_ids.append(job_id)
+            if result is not None and len(result) > 0:
+                results.append(result)
+
+        result = self._combine_mer_results(results)
 
         if output_file:
             save_table(result, output_file)
             logger.info("Saved async crossmatch results to %s", output_file)
+        for job_id in successful_job_ids:
             self._delete_async_job(job_id)
 
         if full_async:
             return {
                 'type': 'euclidkit_crossmatch_remote_async',
                 'environment': self.environment,
-                'job_id': job_id,
+                'job_id': job_ids[0] if len(job_ids) == 1 else None,
+                'job_ids': job_ids,
+                'mer_tables': mer_tables,
                 'results_downloaded': True,
                 'result_row_count': len(result) if result is not None else 0,
                 'output_file': str(output_file) if output_file else None,
-                'query': query,
+                'query': queries[0] if len(queries) == 1 else None,
+                'queries': queries,
             }
 
         return result
     
     def _get_mer_table_name(self, idr_field: Optional[str] = None) -> str:
-        """Get MER catalogue table name for current environment."""
+        """Get primary MER catalogue table name for current environment."""
+        return self._get_mer_table_names(idr_field=idr_field)[0]
+
+    def _get_mer_table_names(self, idr_field: Optional[str] = None) -> List[str]:
+        """Get MER catalogue table names for current environment."""
         if self.environment == 'IDR':
             field = (idr_field or 'WIDE').upper()
             valid_fields = {'WIDE', 'DEEP'}
@@ -1152,18 +1228,47 @@ class EuclidArchive:
                 raise ValueError(
                     f"Invalid IDR field '{idr_field}'. Expected one of {sorted(valid_fields)}"
                 )
-            return (
-                'catalogue.mer_catalogue_wide'
-                if field == 'WIDE'
-                else 'catalogue.mer_catalogue_deep'
-            )
+            if field == 'WIDE':
+                return [
+                    'catalogue.mer_catalogue_wide_survey',
+                    'catalogue.mer_catalogue_wide_mode',
+                ]
+            return ['catalogue.mer_catalogue_deep']
         
         table_names = {
             'PDR': 'catalogue.mer_catalogue',
             'OTF': 'catalogue.mer_catalogue',
             'REG': 'catalogue.mer_final_catalog_fits_file_regreproc1_r2'
         }
-        return table_names.get(self.environment, 'catalogue.mer_catalogue')
+        return [table_names.get(self.environment, 'catalogue.mer_catalogue')]
+
+    @staticmethod
+    def _combine_mer_results(tables: List[Table]) -> Table:
+        """Combine MER query results, keeping the first row for duplicate object IDs."""
+        non_empty = [table for table in tables if table is not None and len(table) > 0]
+        if not non_empty:
+            return Table()
+
+        combined = non_empty[0] if len(non_empty) == 1 else vstack(
+            non_empty,
+            join_type='outer',
+            metadata_conflicts='silent',
+        )
+        id_col = 'object_id' if 'object_id' in combined.colnames else None
+        if id_col is None and 'mer_object_id' in combined.colnames:
+            id_col = 'mer_object_id'
+        if id_col is None:
+            return combined
+
+        seen = set()
+        keep_indices = []
+        for idx, value in enumerate(combined[id_col]):
+            key = str(value)
+            if key in seen:
+                continue
+            seen.add(key)
+            keep_indices.append(idx)
+        return combined[keep_indices] if keep_indices else combined[:0]
 
     def _infer_upload_format(self, suffix: str) -> str:
         """Infer TAP upload format from filename suffix."""
@@ -1442,7 +1547,7 @@ class EuclidArchive:
         job_info = {
             'type': 'euclidkit_crossmatch_async_job',
             'environment': self.environment,
-            'submitted_at_utc': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+            'submitted_at_utc': _utc_timestamp(),
             'job_id': job_id,
             'job_phase': job_phase,
             'job_url': job_url,

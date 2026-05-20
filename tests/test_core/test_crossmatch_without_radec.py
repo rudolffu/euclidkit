@@ -8,6 +8,17 @@ from astropy.table import Table
 from euclidkit.core.data_access import EuclidArchive
 
 
+def test_idr_wide_mer_table_names_include_survey_and_mode():
+    arch = EuclidArchive(environment='IDR')
+
+    assert arch._get_mer_table_names(idr_field='WIDE') == [
+        'catalogue.mer_catalogue_wide_survey',
+        'catalogue.mer_catalogue_wide_mode',
+    ]
+    assert arch._get_mer_table_name(idr_field='WIDE') == 'catalogue.mer_catalogue_wide_survey'
+    assert arch._get_mer_table_names(idr_field='DEEP') == ['catalogue.mer_catalogue_deep']
+
+
 def test_crossmatch_sources_object_id_only_table(monkeypatch):
     # Table lacks 'ra'/'dec' but has object_id_euclid and euclid RA/Dec columns
     user_table = Table({
@@ -32,8 +43,8 @@ def test_crossmatch_sources_object_id_only_table(monkeypatch):
         assert len(out) == 2
         # Verify _crossmatch_batch was called with use_object_id=True
         assert mock_batch.called
-        _, kwargs = mock_batch.call_args
-        assert kwargs['use_object_id'] is True
+        args, _ = mock_batch.call_args
+        assert args[5] is True
 
 
 def test_crossmatch_sources_idr_field_selection(monkeypatch):
@@ -51,14 +62,40 @@ def test_crossmatch_sources_idr_field_selection(monkeypatch):
         arch.crossmatch_sources(user_table=user_table, radius=1.0)
         arch.crossmatch_sources(user_table=user_table, radius=1.0, idr_field='DEEP')
 
-    # Two batches processed (one per invocation)
-    assert mock_batch.call_count == 2
+    # IDR WIDE queries survey+mode; IDR DEEP queries a single MER table.
+    assert mock_batch.call_count == 3
 
     first_call_args, _ = mock_batch.call_args_list[0]
     second_call_args, _ = mock_batch.call_args_list[1]
+    third_call_args, _ = mock_batch.call_args_list[2]
 
-    assert first_call_args[4] == 'catalogue.mer_catalogue_wide'
-    assert second_call_args[4] == 'catalogue.mer_catalogue_deep'
+    assert first_call_args[4] == 'catalogue.mer_catalogue_wide_survey'
+    assert second_call_args[4] == 'catalogue.mer_catalogue_wide_mode'
+    assert third_call_args[4] == 'catalogue.mer_catalogue_deep'
+
+
+def test_crossmatch_sources_idr_wide_deduplicates_primary_mer_table():
+    """IDR WIDE should keep wide_survey rows when wide_mode duplicates object_id."""
+    user_table = Table({'source_id': [123], 'ra': [150.0], 'dec': [2.0]})
+    arch = EuclidArchive(environment='IDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+
+    def fake_batch(batch, ra_col, dec_col, radius, mer_table, use_object_id, force_async=False):
+        if mer_table.endswith('_survey'):
+            return Table({'object_id': [123], 'mer_ra': [150.0], 'source_table': ['survey']})
+        return Table({'object_id': [123], 'mer_ra': [151.0], 'source_table': ['mode']})
+
+    with patch.object(arch, '_crossmatch_batch', side_effect=fake_batch):
+        out = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            use_object_id=True,
+            idr_field='WIDE',
+        )
+
+    assert len(out) == 1
+    assert out['source_table'][0] == 'survey'
 
 
 def test_spatial_crossmatch_contains_expression(monkeypatch):
@@ -78,8 +115,8 @@ def test_spatial_crossmatch_contains_expression(monkeypatch):
         captured['query'] = query
         mock_job = Mock()
         mock_job.get_results.return_value = Table({
-            'RACAT': [150.0],
-            'DECCAT': [2.0],
+            'racat': [150.0],
+            'deccat': [2.0],
             'mer_ra': [150.0001],
             'mer_dec': [2.0001],
             'object_id': [123],
@@ -98,8 +135,7 @@ def test_spatial_crossmatch_contains_expression(monkeypatch):
     )
 
     query = captured['query']
-    assert "CONTAINS(" in query
-    assert "DISTANCE" not in query
+    assert "DISTANCE(" in query
     assert 'separation_arcsec' in result.colnames
 
 
@@ -217,6 +253,7 @@ def test_crossmatch_sources_full_async_chunked_persists_and_merges(tmp_path):
     manifest = json.loads(manifest_path.read_text())
     assert len(manifest['chunks']) == 3
     assert [c['status'] for c in manifest['chunks']] == ['COMPLETED', 'COMPLETED', 'COMPLETED']
+    assert [c['mer_table'] for c in manifest['chunks']] == ['catalogue.mer_catalogue'] * 3
 
     arch.euclid.remove_jobs.assert_any_call(['job-10'])
     arch.euclid.remove_jobs.assert_any_call(['job-20'])

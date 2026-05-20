@@ -366,7 +366,7 @@ class CutoutGenerator:
         df = df.copy()
 
         # Reuse environment-specific MER selection from EuclidArchive.
-        table_name = self.archive._get_mer_table_name(idr_field=idr_field)
+        table_names = self.archive._get_mer_table_names(idr_field=idr_field)
 
         # Upload object IDs and perform a server-side join, matching data_access.py pattern.
         upload_df = df[['object_id']].drop_duplicates().copy()
@@ -376,24 +376,33 @@ class CutoutGenerator:
             tmp_name = tmp_file.name
 
         upload_name = f"user_cutana_oid_{np.random.randint(10000, 99999)}"
-        query = f"""
-        SELECT u.object_id, m.right_ascension, m.declination, m.segmentation_map_id
-        FROM TAP_UPLOAD.{upload_name} AS u
-        JOIN {table_name} AS m ON u.object_id = m.object_id
-        ORDER BY u.object_id
-        """
-
         try:
-            job = self.archive.euclid.launch_job_async(
-                query,
-                upload_resource=tmp_name,
-                upload_table_name=upload_name,
-            )
-            if job is None:
+            result_tables = []
+            for table_name in table_names:
+                query = f"""
+                SELECT u.object_id, m.right_ascension, m.declination, m.segmentation_map_id
+                FROM TAP_UPLOAD.{upload_name} AS u
+                JOIN {table_name} AS m ON u.object_id = m.object_id
+                ORDER BY u.object_id
+                """
+                job = self.archive.euclid.launch_job_async(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+                if job is None:
+                    logger.error("Failed to resolve object_ids to MER metadata from %s", table_name)
+                    continue
+                result = job.get_results()
+                if result is not None and len(result) > 0:
+                    result_tables.append(result)
+
+            coords_table = self.archive._combine_mer_results(result_tables)
+            if len(coords_table) == 0:
                 logger.error("Failed to resolve object_ids to MER metadata")
                 return pd.DataFrame()
-            
-            coords_df = job.get_results().to_pandas()
+
+            coords_df = coords_table.to_pandas()
             # Ensure matching dtype to avoid pandas merge type issues.
             if 'object_id' in coords_df.columns and 'object_id' in df.columns:
                 coords_df['object_id'] = coords_df['object_id'].astype(str)

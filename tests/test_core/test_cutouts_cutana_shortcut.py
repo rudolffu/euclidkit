@@ -8,6 +8,7 @@ import pandas as pd
 from astropy.table import Table
 
 from euclidkit.core.cutouts import CutoutGenerator
+from euclidkit.core.data_access import EuclidArchive
 
 
 def _build_generator_with_archive():
@@ -15,8 +16,10 @@ def _build_generator_with_archive():
     archive._logged_in = True
     archive.environment = 'IDR'
     archive._get_mer_table_name.return_value = 'catalogue.mer_catalogue_deep'
+    archive._get_mer_table_names.return_value = ['catalogue.mer_catalogue_deep']
     archive.login.return_value = None
     archive._ensure_client.return_value = None
+    archive._combine_mer_results.side_effect = lambda tables: tables[0] if tables else Table()
     archive.euclid = Mock()
     return CutoutGenerator(archive=archive), archive
 
@@ -40,13 +43,55 @@ def test_lookup_mer_source_info_uses_mer_table_selection():
 
     resolved = generator._lookup_mer_source_info(input_df, idr_field='DEEP')
 
-    archive._get_mer_table_name.assert_called_once_with(idr_field='DEEP')
+    archive._get_mer_table_names.assert_called_once_with(idr_field='DEEP')
     query = archive.euclid.launch_job_async.call_args[0][0]
     assert 'FROM TAP_UPLOAD.' in query
     assert 'JOIN catalogue.mer_catalogue_deep AS m ON u.object_id = m.object_id' in query
     assert 'segmentation_map_id' in query
     assert 'segmentation_map_id' in resolved.columns
     assert len(resolved) == 2
+
+
+def test_lookup_mer_source_info_queries_both_wide_tables_and_deduplicates():
+    """IDR WIDE Cutana lookup should prefer wide_survey over wide_mode duplicates."""
+    generator, archive = _build_generator_with_archive()
+    archive._get_mer_table_names.return_value = [
+        'catalogue.mer_catalogue_wide_survey',
+        'catalogue.mer_catalogue_wide_mode',
+    ]
+    archive._combine_mer_results.side_effect = EuclidArchive._combine_mer_results
+
+    input_df = pd.DataFrame({'object_id': [100001]})
+    survey_result = Table(
+        {
+            'object_id': ['100001'],
+            'right_ascension': [150.0],
+            'declination': [2.0],
+            'segmentation_map_id': [1234567890000],
+        }
+    )
+    mode_result = Table(
+        {
+            'object_id': ['100001'],
+            'right_ascension': [151.0],
+            'declination': [2.1],
+            'segmentation_map_id': [9876543210000],
+        }
+    )
+    survey_job = Mock()
+    survey_job.get_results.return_value = survey_result
+    mode_job = Mock()
+    mode_job.get_results.return_value = mode_result
+    archive.euclid.launch_job_async.side_effect = [survey_job, mode_job]
+
+    resolved = generator._lookup_mer_source_info(input_df, idr_field='WIDE')
+
+    assert archive.euclid.launch_job_async.call_count == 2
+    queries = [call.args[0] for call in archive.euclid.launch_job_async.call_args_list]
+    assert 'JOIN catalogue.mer_catalogue_wide_survey AS m' in queries[0]
+    assert 'JOIN catalogue.mer_catalogue_wide_mode AS m' in queries[1]
+    assert len(resolved) == 1
+    assert resolved['right_ascension'].iloc[0] == 150.0
 
 
 def test_generate_cutana_input_prefers_segmentation_shortcut():
