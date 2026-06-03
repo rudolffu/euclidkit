@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from astropy.table import Table
 import numpy as np
 
-from euclidkit.cli.crossmatch_cli import crossmatch, query_spectra, compile_spectra, upload_table
+from euclidkit.cli.crossmatch_cli import crossmatch, query_spectra, query_zspe, compile_spectra, upload_table
 
 
 class TestCrossmatchCLI:
@@ -544,6 +544,95 @@ class TestQuerySpectraCLI:
                 
         if os.path.exists(output_file.name):
             os.unlink(output_file.name)
+
+
+class TestQueryZspeCLI:
+    """Test cases for query-zspe CLI command."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+        self.crossmatch_table = Table({
+            'object_id': [100001, 100002, 100003],
+        })
+
+    def create_temp_crossmatch_file(self):
+        """Create a temporary crossmatch file."""
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.fits', delete=False)
+        self.crossmatch_table.write(temp_file.name, format='fits', overwrite=True)
+        return temp_file.name
+
+    def test_query_zspe_defaults_to_qso_wide_idr(self):
+        """query-zspe should default to IDR QSO WIDE candidate lookup."""
+        crossmatch_file = self.create_temp_crossmatch_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.query_zspe_candidates.return_value = Table({
+                        'object_id': [100001, 100002],
+                        'spe_rank': [1, 1],
+                        'spe_z': [2.1, 0.8],
+                        'spe_z_err': [0.01, 0.02],
+                        'source_table': ['wide_survey', 'wide'],
+                    })
+
+                    with patch('euclidkit.utils.io.load_table', return_value=self.crossmatch_table):
+                        result = self.runner.invoke(query_zspe, [
+                            '--crossmatch', crossmatch_file,
+                            '--output', output_file.name,
+                        ])
+
+                    assert result.exit_code == 0
+                    mock_archive_class.assert_called_once_with(environment='IDR')
+                    mock_archive.query_zspe_candidates.assert_called_once()
+                    kwargs = mock_archive.query_zspe_candidates.call_args.kwargs
+                    assert kwargs['object_type'] == 'qso'
+                    assert kwargs['idr_field'] == 'WIDE'
+                    assert kwargs['full_async'] is False
+                    assert "SPE redshift query completed: 2 candidates found" in result.output
+                    assert "Unique objects with SPE redshifts: 2" in result.output
+        finally:
+            os.unlink(crossmatch_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_query_zspe_full_async_handles_metadata(self):
+        """query-zspe --full-async should pass async options and print metadata."""
+        crossmatch_file = self.create_temp_crossmatch_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.query_zspe_candidates.return_value = {
+                        'results_downloaded': True,
+                        'result_row_count': 3,
+                        'chunk_count': 2,
+                        'chunk_size': 2,
+                        'job_id': 'zs-job',
+                    }
+
+                    with patch('euclidkit.utils.io.load_table', return_value=self.crossmatch_table):
+                        result = self.runner.invoke(query_zspe, [
+                            '--crossmatch', crossmatch_file,
+                            '--output', output_file.name,
+                            '--full-async',
+                            '--async-chunk-size', '2',
+                        ])
+
+                    assert result.exit_code == 0
+                    kwargs = mock_archive.query_zspe_candidates.call_args.kwargs
+                    assert kwargs['full_async'] is True
+                    assert kwargs['async_chunk_size'] == 2
+                    assert "SPE redshift async query completed and results were downloaded." in result.output
+                    assert "Rows downloaded: 3" in result.output
+                    assert "Chunks processed: 2 (chunk size: 2)" in result.output
+        finally:
+            os.unlink(crossmatch_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
 
 
 class TestCompileSpectraCLI:

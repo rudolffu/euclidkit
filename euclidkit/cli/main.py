@@ -15,6 +15,7 @@ from euclidkit.config import generate_config_template
 from euclidkit.cli.crossmatch_cli import (
     crossmatch,
     query_spectra,
+    query_zspe,
     query_cutana,
     compile_spectra,
     upload_table,
@@ -122,6 +123,7 @@ def pipeline(config_file: str, **kwargs):
 # Add commands to main CLI
 main.add_command(crossmatch)
 main.add_command(query_spectra, name='query-spectra')  
+main.add_command(query_zspe, name='query-zspe')
 main.add_command(query_cutana, name='query-cutana')
 main.add_command(compile_spectra, name='compile-spectra')
 main.add_command(upload_table)

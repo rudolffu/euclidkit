@@ -15,7 +15,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
-from astropy.table import Table, vstack
+from astropy.table import Table, join, vstack
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
@@ -101,11 +101,32 @@ class EuclidArchive:
             cleaned = f"c_{cleaned}"
         return cleaned
 
+    @staticmethod
+    def _stringify_upload_value(value: Any) -> str:
+        """Convert object-dtype upload values to VOTable-safe scalar strings."""
+        if np.ma.is_masked(value) or value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, (np.ndarray, list, tuple, dict)):
+            try:
+                return json.dumps(value.tolist() if isinstance(value, np.ndarray) else value)
+            except TypeError:
+                return str(value)
+        try:
+            if np.isscalar(value) and pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        return str(value)
+
     def _sanitize_upload_table_columns(self, table: Table) -> Tuple[Table, Dict[str, str]]:
         """
         Return a copy of a table with ADQL-safe upload column names.
 
         Names are normalized to lower-case and restricted to [A-Za-z_][A-Za-z0-9_]*.
+        Object-dtype columns are converted to strings so Astropy can serialize
+        masked/null scalar values to VOTable for TAP_UPLOAD.
         """
         renamed = table.copy()
         mapping: Dict[str, str] = {}
@@ -125,10 +146,25 @@ class EuclidArchive:
         for old, new in changes.items():
             renamed.rename_column(old, new)
 
+        object_columns = []
+        for colname in renamed.colnames:
+            column = renamed[colname]
+            dtype = getattr(column, "dtype", None)
+            if dtype is not None and dtype.kind == "O":
+                renamed[colname] = [self._stringify_upload_value(value) for value in column]
+                object_columns.append(colname)
+
         if changes:
             logger.info("Sanitized %d upload column name(s) for ADQL compatibility", len(changes))
             for old, new in changes.items():
                 logger.info("  %s -> %s", old, new)
+
+        if object_columns:
+            logger.info(
+                "Converted %d object-dtype upload column(s) to strings for VOTable compatibility: %s",
+                len(object_columns),
+                ", ".join(object_columns),
+            )
 
         return renamed, mapping
     
@@ -1098,6 +1134,14 @@ class EuclidArchive:
             "m.kron_radius_err AS kron_radius_err",
             "m.gaia_id AS gaia_id",
             "m.gaia_match_quality AS gaia_match_quality",
+            "m.det_quality_flag AS det_quality_flag",
+            "m.parent_id AS parent_id",
+            "m.spurious_flag AS spurious_flag",
+            "m.vis_det AS vis_det",
+            "m.flag_vis AS flag_vis",
+            "m.flag_y AS flag_y",
+            "m.flag_j AS flag_j",
+            "m.flag_h AS flag_h",
             "m.flux_y_templfit AS flux_y_templfit",
             "m.flux_h_templfit AS flux_h_templfit",
             "m.flux_j_templfit AS flux_j_templfit",
@@ -1708,6 +1752,14 @@ class EuclidArchive:
                 ('kron_radius_err', 'kron_radius_err'),
                 ('gaia_id', 'gaia_id'),
                 ('gaia_match_quality', 'gaia_match_quality'),
+                ('det_quality_flag', 'det_quality_flag'),
+                ('parent_id', 'parent_id'),
+                ('spurious_flag', 'spurious_flag'),
+                ('vis_det', 'vis_det'),
+                ('flag_vis', 'flag_vis'),
+                ('flag_y', 'flag_y'),
+                ('flag_j', 'flag_j'),
+                ('flag_h', 'flag_h'),
                 ('flux_y_templfit', 'flux_y_templfit'),
                 ('flux_h_templfit', 'flux_h_templfit'),
                 ('flux_j_templfit', 'flux_j_templfit'),
@@ -1798,7 +1850,15 @@ class EuclidArchive:
                        m.kron_radius AS kron_radius,
                        m.kron_radius_err AS kron_radius_err,
                        m.gaia_id AS gaia_id,
-                       m.gaia_match_quality AS gaia_match_quality, 
+                       m.gaia_match_quality AS gaia_match_quality,
+                       m.det_quality_flag AS det_quality_flag,
+                       m.parent_id AS parent_id,
+                       m.spurious_flag AS spurious_flag,
+                       m.vis_det AS vis_det,
+                       m.flag_vis AS flag_vis,
+                       m.flag_y AS flag_y,
+                       m.flag_j AS flag_j,
+                       m.flag_h AS flag_h,
                        flux_vis_psf, fluxerr_vis_psf,
                        flux_y_templfit, fluxerr_y_templfit,
                        flux_j_templfit, fluxerr_j_templfit,
@@ -1976,6 +2036,423 @@ class EuclidArchive:
             # Clean up temporary file
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
+
+    def _get_zspe_candidate_table_names(
+        self,
+        object_type: str = "qso",
+        idr_field: Optional[str] = None,
+    ) -> List[Tuple[str, str]]:
+        """Resolve IDR SPE redshift candidate tables and provenance labels."""
+        if self.environment != "IDR":
+            raise ValueError("query-zspe is only supported for the IDR environment")
+
+        normalized_type = object_type.lower()
+        if normalized_type not in {"qso", "galaxy"}:
+            raise ValueError("object_type must be one of: qso, galaxy")
+
+        field = (idr_field or "WIDE").upper()
+        if field not in {"WIDE", "DEEP"}:
+            raise ValueError("idr_field must be one of: WIDE, DEEP")
+
+        prefix = f"catalogue.spectro_z_spe_{normalized_type}_candidates"
+        if field == "WIDE":
+            return [
+                (f"{prefix}_wide_survey", "wide_survey"),
+                (f"{prefix}_wide", "wide"),
+            ]
+        return [(f"{prefix}_deep", "deep")]
+
+    def _query_zspe_batch(self, batch: Table, table_name: str, source_label: str) -> Table:
+        """Query one SPE redshift candidate table for a batch of object IDs."""
+        batch, _ = self._sanitize_upload_table_columns(batch)
+
+        with tempfile.NamedTemporaryFile(suffix=".vot", delete=False) as tmp_file:
+            batch.write(tmp_file.name, format="votable", overwrite=True)
+            tmp_name = tmp_file.name
+
+        try:
+            upload_name = f"user_zspe_batch_{np.random.randint(10000, 99999)}"
+            query = f"""
+            SELECT
+                u.object_id,
+                z.spe_rank,
+                z.spe_z,
+                z.spe_z_err,
+                '{source_label}' AS source_table
+            FROM TAP_UPLOAD.{upload_name} AS u
+            JOIN {table_name} AS z
+                ON u.object_id = z.object_id
+            """
+
+            if len(batch) < 2000:
+                job = self.euclid.launch_job(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+            else:
+                job = self.euclid.launch_job_async(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+            result = job.get_results()
+            return result if result is not None else Table()
+        except Exception as e:
+            logger.error(f"Error querying SPE redshift batch: {e}")
+            return Table()
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+
+    def _build_zspe_async_query(
+        self,
+        upload_name: str,
+        table_names: List[Tuple[str, str]],
+    ) -> str:
+        """Build a server-side SPE redshift query, including WIDE fallback when needed."""
+        first_table, first_label = table_names[0]
+        first_select = f"""
+            SELECT
+                u.object_id,
+                z.spe_rank,
+                z.spe_z,
+                z.spe_z_err,
+                '{first_label}' AS source_table
+            FROM TAP_UPLOAD.{upload_name} AS u
+            JOIN {first_table} AS z
+                ON u.object_id = z.object_id
+        """
+
+        if len(table_names) == 1:
+            return first_select
+
+        fallback_table, fallback_label = table_names[1]
+        fallback_select = f"""
+            SELECT
+                u.object_id,
+                z.spe_rank,
+                z.spe_z,
+                z.spe_z_err,
+                '{fallback_label}' AS source_table
+            FROM TAP_UPLOAD.{upload_name} AS u
+            JOIN {fallback_table} AS z
+                ON u.object_id = z.object_id
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM {first_table} AS s
+                WHERE s.object_id = u.object_id
+            )
+        """
+        return f"{first_select}\nUNION ALL\n{fallback_select}"
+
+    def _submit_zspe_async_batch(
+        self,
+        batch: Table,
+        table_names: List[Tuple[str, str]],
+    ) -> Dict[str, Any]:
+        """Submit one SPE redshift async query for a batch of object IDs."""
+        batch, _ = self._sanitize_upload_table_columns(batch)
+
+        with tempfile.NamedTemporaryFile(suffix=".vot", delete=False) as tmp_file:
+            batch.write(tmp_file.name, format="votable", overwrite=True)
+            tmp_name = tmp_file.name
+
+        try:
+            upload_name = f"user_zspe_async_{np.random.randint(10000, 99999)}"
+            query = self._build_zspe_async_query(upload_name, table_names)
+            job = self.euclid.launch_job_async(
+                query,
+                upload_resource=tmp_name,
+                upload_table_name=upload_name,
+            )
+            return {
+                "job": job,
+                "query": query.strip(),
+                "upload_table_name": upload_name,
+                "row_count": len(batch),
+            }
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+
+    def _join_zspe_with_input(self, input_table: Table, zspe_table: Table) -> Table:
+        """Inner join input rows with SPE redshift columns on object_id."""
+        if zspe_table is None or len(zspe_table) == 0:
+            return Table()
+        if "object_id" not in input_table.colnames:
+            raise ValueError("input_table must contain 'object_id'")
+        if "object_id" not in zspe_table.colnames:
+            return Table()
+
+        spe_cols = ["object_id", "spe_rank", "spe_z", "spe_z_err"]
+        missing = [col for col in spe_cols if col not in zspe_table.colnames]
+        if missing:
+            raise ValueError(f"SPE redshift result missing required columns: {missing}")
+
+        left = input_table.copy()
+        for col in ["spe_rank", "spe_z", "spe_z_err"]:
+            if col in left.colnames:
+                left.remove_column(col)
+        left["object_id"] = [int(value) for value in left["object_id"]]
+
+        right = zspe_table[spe_cols].copy()
+        right["object_id"] = [int(value) for value in right["object_id"]]
+        return join(left, right, keys="object_id", join_type="inner", metadata_conflicts="silent")
+
+    def query_zspe_candidates(
+        self,
+        crossmatch_table: Optional[Table] = None,
+        output_file: Optional[Union[str, Path]] = None,
+        object_type: str = "qso",
+        idr_field: Optional[str] = None,
+        full_async: bool = False,
+        async_chunk_size: int = 500000,
+    ) -> Union[Table, Dict[str, Any]]:
+        """
+        Query IDR SPE redshift candidate catalogues for object IDs.
+
+        WIDE queries use wide_survey first, then submit only unmatched object IDs
+        to the wide table.
+        """
+        if not self._logged_in:
+            logger.warning("Not logged in - attempting login with default credentials")
+            self.login()
+
+        if crossmatch_table is None:
+            raise ValueError("Must provide crossmatch_table with 'object_id'")
+        if "object_id" not in crossmatch_table.colnames:
+            raise ValueError("crossmatch_table must contain 'object_id'")
+
+        object_ids = []
+        seen = set()
+        for value in crossmatch_table["object_id"]:
+            key = self._value_key(value)
+            if key not in seen:
+                seen.add(key)
+                object_ids.append(int(value))
+
+        logger.info(
+            "Querying SPE redshift candidates for %d unique objects",
+            len(object_ids),
+        )
+
+        user_table = Table()
+        user_table["object_id"] = object_ids
+        table_names = self._get_zspe_candidate_table_names(
+            object_type=object_type,
+            idr_field=idr_field,
+        )
+
+        normalized_object_type = object_type.lower()
+        normalized_idr_field = (idr_field or "WIDE").upper()
+
+        if full_async:
+            if len(user_table) == 0:
+                raise ValueError("Object ID table is empty; nothing to submit in full_async mode.")
+            if output_file is None:
+                raise ValueError("output_file must be provided when full_async=True.")
+            if async_chunk_size <= 0:
+                raise ValueError("async_chunk_size must be a positive integer")
+
+            output_path = Path(output_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if len(user_table) > async_chunk_size:
+                chunk_suffix = output_path.suffix or ".fits"
+                manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
+                batches = [
+                    (i, min(i + async_chunk_size, len(user_table)))
+                    for i in range(0, len(user_table), async_chunk_size)
+                ]
+                manifest: Dict[str, Any] = {
+                    "type": "euclidkit_zspe_async_chunked",
+                    "environment": self.environment,
+                    "submitted_at_utc": _utc_timestamp(),
+                    "row_count": len(user_table),
+                    "chunk_size": async_chunk_size,
+                    "chunk_count": len(batches),
+                    "query_count": 0,
+                    "object_type": normalized_object_type,
+                    "idr_field": normalized_idr_field,
+                    "tables": [table for table, _ in table_names],
+                    "output_file": str(output_path),
+                    "chunks": [],
+                }
+                part_files: List[Path] = []
+
+                for idx, (start, end) in enumerate(batches, 1):
+                    batch = user_table[start:end]
+                    submission = self._submit_zspe_async_batch(batch, table_names)
+                    job = submission.get("job")
+                    job_id = getattr(job, "jobid", None)
+                    part_path = output_path.with_name(
+                        f"{output_path.stem}_part_{idx:04d}{chunk_suffix}"
+                    )
+                    rows = 0
+                    status = "FAILED"
+                    error_msg = None
+                    try:
+                        chunk_result = job.get_results()
+                        rows = len(chunk_result) if chunk_result is not None else 0
+                        save_table(chunk_result if chunk_result is not None else Table(), part_path)
+                        self._delete_async_job(job_id)
+                        part_files.append(part_path)
+                        status = "COMPLETED"
+                    except Exception as exc:
+                        error_msg = str(exc)
+                        manifest["chunks"].append({
+                            "index": idx,
+                            "row_start": start,
+                            "row_end": end,
+                            "job_id": job_id,
+                            "status": status,
+                            "rows": rows,
+                            "file": str(part_path),
+                            "query": submission.get("query"),
+                            "error": error_msg,
+                        })
+                        with open(manifest_path, "w", encoding="utf-8") as fh:
+                            json.dump(manifest, fh, indent=2)
+                        raise
+
+                    manifest["chunks"].append({
+                        "index": idx,
+                        "row_start": start,
+                        "row_end": end,
+                        "job_id": job_id,
+                        "status": status,
+                        "rows": rows,
+                        "file": str(part_path),
+                        "query": submission.get("query"),
+                        "error": error_msg,
+                    })
+                    with open(manifest_path, "w", encoding="utf-8") as fh:
+                        json.dump(manifest, fh, indent=2)
+
+                merge_tables = [load_table(path) for path in part_files] if part_files else []
+                zspe_result = vstack(merge_tables, metadata_conflicts="silent") if merge_tables else Table()
+                final_result = self._join_zspe_with_input(crossmatch_table, zspe_result)
+                manifest["query_count"] = len(manifest["chunks"])
+                with open(manifest_path, "w", encoding="utf-8") as fh:
+                    json.dump(manifest, fh, indent=2)
+                save_table(final_result, output_path)
+
+                return {
+                    "type": "euclidkit_zspe_async_chunked",
+                    "environment": self.environment,
+                    "submitted_at_utc": manifest["submitted_at_utc"],
+                    "row_count": len(user_table),
+                    "chunk_size": async_chunk_size,
+                    "chunk_count": len(batches),
+                    "query_count": len(manifest["chunks"]),
+                    "object_type": normalized_object_type,
+                    "idr_field": normalized_idr_field,
+                    "tables": [table for table, _ in table_names],
+                    "job_ids": [c.get("job_id") for c in manifest["chunks"] if c.get("job_id")],
+                    "results_downloaded": True,
+                    "result_row_count": len(final_result),
+                    "output_file": str(output_path),
+                    "manifest_file": str(manifest_path),
+                }
+
+            submission = self._submit_zspe_async_batch(user_table, table_names)
+            job = submission.get("job")
+            job_id = getattr(job, "jobid", None)
+
+            def _job_attr(attr: str) -> Any:
+                value = getattr(job, attr, None)
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    return value
+                return None
+
+            job_info: Dict[str, Any] = {
+                "type": "euclidkit_zspe_async_job",
+                "environment": self.environment,
+                "submitted_at_utc": _utc_timestamp(),
+                "job_id": job_id,
+                "job_phase": _job_attr("phase"),
+                "job_url": _job_attr("url"),
+                "results_url": _job_attr("remote_results_location"),
+                "upload_table": submission.get("upload_table_name"),
+                "row_count": len(user_table),
+                "object_type": normalized_object_type,
+                "idr_field": normalized_idr_field,
+                "tables": [table for table, _ in table_names],
+                "query": submission.get("query"),
+                "results_downloaded": False,
+                "result_row_count": 0,
+                "download_error": None,
+            }
+
+            try:
+                async_result = job.get_results()
+                zspe_result = async_result if async_result is not None else Table()
+                final_result = self._join_zspe_with_input(crossmatch_table, zspe_result)
+                save_table(final_result, output_path)
+                self._delete_async_job(job_id)
+                job_info["results_downloaded"] = True
+                job_info["result_row_count"] = len(final_result)
+                job_info["output_file"] = str(output_path)
+            except Exception as exc:
+                job_info["download_error"] = str(exc)
+                job_info_path = output_path.with_name(output_path.name + ".job.json")
+                self._write_job_info(job_info, job_info_path)
+                job_info["job_info_file"] = str(job_info_path)
+
+            return job_info
+
+        batch_size = 1000
+        all_results: List[Table] = []
+
+        for i in range(0, len(user_table), batch_size):
+            batch = user_table[i:i + batch_size]
+            logger.info(
+                "Querying SPE redshift batch %d/%d",
+                i // batch_size + 1,
+                (len(user_table) - 1) // batch_size + 1,
+            )
+
+            first_table, first_label = table_names[0]
+            first_result = self._query_zspe_batch(batch, first_table, first_label)
+            if len(first_result) > 0:
+                all_results.append(first_result)
+
+            if len(table_names) == 2:
+                matched = (
+                    {self._value_key(value) for value in first_result["object_id"]}
+                    if len(first_result) > 0 and "object_id" in first_result.colnames
+                    else set()
+                )
+                mask = [self._value_key(value) not in matched for value in batch["object_id"]]
+                unmatched = batch[mask]
+                logger.info(
+                    "IDR WIDE SPE fallback batch: %d/%d objects unmatched in wide_survey",
+                    len(unmatched),
+                    len(batch),
+                )
+                if len(unmatched) > 0:
+                    fallback_table, fallback_label = table_names[1]
+                    fallback_result = self._query_zspe_batch(
+                        unmatched,
+                        fallback_table,
+                        fallback_label,
+                    )
+                    if len(fallback_result) > 0:
+                        all_results.append(fallback_result)
+
+        if all_results:
+            zspe_result = vstack(all_results, metadata_conflicts="silent")
+            final_result = self._join_zspe_with_input(crossmatch_table, zspe_result)
+        else:
+            logger.warning("No SPE redshift candidates found")
+            final_result = Table()
+
+        if output_file:
+            save_table(final_result, output_file)
+            logger.info(f"Saved SPE redshift candidate results to {output_file}")
+
+        return final_result
     
     def query_spectra_sources(
         self,

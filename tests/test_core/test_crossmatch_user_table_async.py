@@ -49,3 +49,14 @@ def test_crossmatch_user_table_uses_async_by_default():
     assert "JOIN catalogue.mer_catalogue_wide_mode AS m" in queries[1]
     assert "NOT EXISTS" in queries[1]
     assert "catalogue.mer_catalogue_wide_survey AS s" in queries[1]
+    for field in [
+        "det_quality_flag",
+        "parent_id",
+        "spurious_flag",
+        "vis_det",
+        "flag_vis",
+        "flag_y",
+        "flag_j",
+        "flag_h",
+    ]:
+        assert f"m.{field} AS {field}" in queries[0]

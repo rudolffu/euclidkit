@@ -34,6 +34,7 @@ def test_lookup_mer_source_info_uses_mer_table_selection():
             'object_id': ['100001', '100002'],
             'right_ascension': [150.0, 151.0],
             'declination': [2.0, 2.1],
+            'det_quality_flag': [0, 1],
             'segmentation_map_id': [1234567890000, 9876543210000],
         }
     )
@@ -48,6 +49,18 @@ def test_lookup_mer_source_info_uses_mer_table_selection():
     assert 'FROM TAP_UPLOAD.' in query
     assert 'JOIN catalogue.mer_catalogue_deep AS m ON u.object_id = m.object_id' in query
     assert 'segmentation_map_id' in query
+    for field in [
+        'det_quality_flag',
+        'parent_id',
+        'spurious_flag',
+        'vis_det',
+        'flag_vis',
+        'flag_y',
+        'flag_j',
+        'flag_h',
+    ]:
+        assert f'm.{field}' in query
+    assert 'det_quality_flag' in resolved.columns
     assert 'segmentation_map_id' in resolved.columns
     assert len(resolved) == 2
 

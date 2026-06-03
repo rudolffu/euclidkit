@@ -297,6 +297,107 @@ def query_spectra(crossmatch: Optional[str], output: str,
             archive.logout()
 
 
+@click.command(name='query-zspe')
+@click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
+              help='Input table containing Euclid object_id values')
+@click.option('--output', '-o', required=True, type=click.Path(),
+              help='Output SPE redshift candidate table')
+@click.option('--object-type', type=click.Choice(['qso', 'galaxy']), default='qso',
+              show_default=True, help='SPE candidate object type')
+@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+              show_default=True, help='IDR field selection')
+@click.option('--credentials', '-c', type=click.Path(exists=True),
+              help='Credentials file path')
+@click.option('--full-async', is_flag=True,
+              help='Use asynchronous TAP mode with server-side WIDE fallback')
+@click.option('--async-chunk-size', type=int, default=500000, show_default=True,
+              help='Rows per async chunk when --full-async is used on large tables')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
+               credentials: Optional[str], full_async: bool, async_chunk_size: int,
+               verbose: bool):
+    """
+    Query IDR SPE redshift candidates by object_id.
+
+    WIDE queries search wide_survey first, then query wide only for objects
+    without a wide_survey candidate.
+    """
+    import logging
+    from euclidkit.core.data_access import EuclidArchive
+    from euclidkit.utils.io import load_table
+
+    archive = None
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    try:
+        archive = EuclidArchive(environment='IDR')
+
+        if credentials:
+            archive.login(credentials_file=credentials)
+        else:
+            archive.login()
+
+        if verbose:
+            click.echo("Connected to IDR environment")
+            click.echo(f"Input table: {crossmatch}")
+            click.echo(f"Object type: {object_type}")
+            click.echo(f"IDR field: {idr_field.upper()}")
+            if full_async:
+                click.echo("Full-table async mode enabled")
+                click.echo(f"Async chunk size: {async_chunk_size}")
+
+        crossmatch_table = load_table(crossmatch)
+        results = archive.query_zspe_candidates(
+            crossmatch_table=crossmatch_table,
+            output_file=output,
+            object_type=object_type,
+            idr_field=idr_field.upper(),
+            full_async=full_async,
+            async_chunk_size=async_chunk_size,
+        )
+
+        if full_async:
+            if results.get('results_downloaded'):
+                click.echo("SPE redshift async query completed and results were downloaded.")
+                click.echo(f"Results saved to: {output}")
+                if results.get('result_row_count') is not None:
+                    click.echo(f"Rows downloaded: {results['result_row_count']}")
+                if results.get('chunk_count') is not None:
+                    click.echo(f"Chunks processed: {results['chunk_count']} (chunk size: {results.get('chunk_size')})")
+                job_id = results.get('job_id')
+                if job_id:
+                    click.echo(f"Job ID: {job_id}")
+            else:
+                click.echo("SPE redshift job submitted asynchronously.")
+                job_id = results.get('job_id')
+                if job_id:
+                    click.echo(f"Job ID: {job_id}")
+                job_info_file = results.get('job_info_file', str(output))
+                click.echo(f"Job info saved to: {job_info_file}")
+            return
+
+        click.echo(f"SPE redshift query completed: {len(results)} candidates found")
+        click.echo(f"Results saved to: {output}")
+
+        if len(results) > 0 and 'object_id' in results.colnames:
+            unique_objects = len(set(results['object_id']))
+            click.echo(f"Unique objects with SPE redshifts: {unique_objects}")
+        if len(results) > 0 and 'source_table' in results.colnames:
+            click.echo("Candidates by source table:")
+            for source in sorted(set(results['source_table'])):
+                count = sum(results['source_table'] == source)
+                click.echo(f"  {source}: {count}")
+
+    except Exception as e:
+        click.echo(f"Error querying SPE redshifts: {e}", err=True)
+        sys.exit(1)
+    finally:
+        if archive is not None:
+            archive.logout()
+
+
 @click.command(name='query-cutana')
 @click.option('--sources', '-s', required=True, type=click.Path(exists=True),
               help='Input table with object_id or RA/Dec columns')
@@ -806,6 +907,7 @@ def crossmatch_commands():
 # Add commands to group
 crossmatch_commands.add_command(crossmatch, name='crossmatch')
 crossmatch_commands.add_command(query_spectra, name='query-spectra') 
+crossmatch_commands.add_command(query_zspe, name='query-zspe')
 crossmatch_commands.add_command(query_cutana, name='query-cutana')
 crossmatch_commands.add_command(compile_spectra, name='compile-spectra')
 

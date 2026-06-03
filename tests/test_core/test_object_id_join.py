@@ -3,7 +3,7 @@
 from unittest.mock import Mock
 
 import numpy as np
-from astropy.table import Table
+from astropy.table import MaskedColumn, Table
 
 from euclidkit.core.data_access import EuclidArchive
 
@@ -53,8 +53,36 @@ def test_crossmatch_batch_object_id_join_query_build(monkeypatch):
     assert 'u.object_id AS object_id_user' in q
     # MER columns that collide are prefixed
     assert 'm.mu_max AS mer_mu_max' in q
+    for field in [
+        'det_quality_flag',
+        'parent_id',
+        'spurious_flag',
+        'vis_det',
+        'flag_vis',
+        'flag_y',
+        'flag_j',
+        'flag_h',
+    ]:
+        assert f'm.{field} AS {field}' in q
 
     # Output is whatever job returned (no separation in this path)
     assert 'separation_arcsec' not in out.colnames
     assert 'object_id' in out.colnames
 
+
+def test_sanitize_upload_table_columns_makes_masked_object_column_votable_safe(tmp_path):
+    archive = EuclidArchive(environment='REG')
+    table = Table(
+        {
+            'object_id': [1, 2],
+            'addon_sampling_group': MaskedColumn(
+                data=np.array([None, None], dtype=object),
+                mask=[True, True],
+            ),
+        }
+    )
+
+    sanitized, _ = archive._sanitize_upload_table_columns(table)
+
+    assert sanitized['addon_sampling_group'].dtype.kind in {'U', 'S'}
+    sanitized.write(tmp_path / 'upload.vot', format='votable')

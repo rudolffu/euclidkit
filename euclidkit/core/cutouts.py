@@ -380,7 +380,19 @@ class CutoutGenerator:
                 upload_name = f"user_cutana_oid_{np.random.randint(10000, 99999)}"
                 try:
                     query = f"""
-                    SELECT u.object_id, m.right_ascension, m.declination, m.segmentation_map_id
+                    SELECT
+                        u.object_id,
+                        m.right_ascension,
+                        m.declination,
+                        m.det_quality_flag,
+                        m.parent_id,
+                        m.spurious_flag,
+                        m.vis_det,
+                        m.flag_vis,
+                        m.flag_y,
+                        m.flag_j,
+                        m.flag_h,
+                        m.segmentation_map_id
                     FROM TAP_UPLOAD.{upload_name} AS u
                     JOIN {table_name} AS m ON u.object_id = m.object_id
                     ORDER BY u.object_id
@@ -447,8 +459,21 @@ class CutoutGenerator:
             
             # Merge back with original data. Drop potentially stale MER-style
             # columns first to avoid pandas suffixing to *_x/*_y.
+            mer_metadata_cols = [
+                'right_ascension',
+                'declination',
+                'det_quality_flag',
+                'parent_id',
+                'spurious_flag',
+                'vis_det',
+                'flag_vis',
+                'flag_y',
+                'flag_j',
+                'flag_h',
+                'segmentation_map_id',
+            ]
             drop_if_present = [
-                col for col in ['right_ascension', 'declination', 'segmentation_map_id']
+                col for col in mer_metadata_cols
                 if col in df.columns
             ]
             if drop_if_present:
@@ -514,7 +539,23 @@ class CutoutGenerator:
                 return pd.DataFrame()
 
             # Preserve user columns by merging back on input coordinate columns.
-            keep_cols = [c for c in ['object_id', 'right_ascension', 'declination', 'segmentation_map_id'] if c in match_df.columns]
+            keep_cols = [
+                c for c in [
+                    'object_id',
+                    'right_ascension',
+                    'declination',
+                    'det_quality_flag',
+                    'parent_id',
+                    'spurious_flag',
+                    'vis_det',
+                    'flag_vis',
+                    'flag_y',
+                    'flag_j',
+                    'flag_h',
+                    'segmentation_map_id',
+                ]
+                if c in match_df.columns
+            ]
             select_cols = []
             for col in [ra_col, dec_col] + keep_cols:
                 if col not in select_cols:

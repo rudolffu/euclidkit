@@ -79,6 +79,211 @@ class TestEuclidArchive:
             archive = EuclidArchive(environment=env)
             assert archive._get_spectra_source_table_name() == expected
 
+    def test_get_zspe_candidate_table_names(self):
+        """SPE redshift candidate tables should resolve by object type and IDR field."""
+        archive = EuclidArchive(environment='IDR')
+
+        assert archive._get_zspe_candidate_table_names('qso', 'WIDE') == [
+            ('catalogue.spectro_z_spe_qso_candidates_wide_survey', 'wide_survey'),
+            ('catalogue.spectro_z_spe_qso_candidates_wide', 'wide'),
+        ]
+        assert archive._get_zspe_candidate_table_names('galaxy', 'DEEP') == [
+            ('catalogue.spectro_z_spe_galaxy_candidates_deep', 'deep'),
+        ]
+
+    def test_query_zspe_candidates_wide_fallback(self):
+        """WIDE zspe queries should pass only survey-unmatched objects to wide."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+        cross_tab = Table({'object_id': [1, 2, 3], 'label': ['a', 'b', 'c']})
+        survey_result = Table({
+            'object_id': [1, 1, 2],
+            'spe_rank': [1, 2, 1],
+            'spe_z': [2.1, 2.2, 0.7],
+            'spe_z_err': [0.01, 0.02, 0.03],
+            'source_table': ['wide_survey', 'wide_survey', 'wide_survey'],
+        })
+        wide_result = Table({
+            'object_id': [3],
+            'spe_rank': [1],
+            'spe_z': [1.1],
+            'spe_z_err': [0.04],
+            'source_table': ['wide'],
+        })
+        archive._query_zspe_batch = Mock(side_effect=[survey_result, wide_result])
+
+        result = archive.query_zspe_candidates(
+            crossmatch_table=cross_tab,
+            object_type='qso',
+            idr_field='WIDE',
+        )
+
+        assert len(result) == 4
+        assert 'label' in result.colnames
+        assert 'spe_rank' in result.colnames
+        assert 'spe_z' in result.colnames
+        assert 'spe_z_err' in result.colnames
+        assert 'source_table' not in result.colnames
+        assert archive._query_zspe_batch.call_count == 2
+        first_batch = archive._query_zspe_batch.call_args_list[0].args[0]
+        second_batch = archive._query_zspe_batch.call_args_list[1].args[0]
+        assert list(first_batch['object_id']) == [1, 2, 3]
+        assert list(second_batch['object_id']) == [3]
+
+    def test_query_zspe_candidates_requires_object_id(self):
+        """SPE redshift candidate queries require object_id input."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+
+        with pytest.raises(ValueError, match="object_id"):
+            archive.query_zspe_candidates(crossmatch_table=Table({'source_id': [1]}))
+
+    def test_query_zspe_batch_has_no_order_by(self):
+        """Synchronous SPE redshift batch query should not use server-side ordering."""
+        archive = EuclidArchive(environment='IDR')
+        archive.euclid = Mock()
+        job = Mock()
+        job.get_results.return_value = Table()
+        archive.euclid.launch_job.return_value = job
+
+        archive._query_zspe_batch(
+            Table({'object_id': [1]}),
+            'catalogue.spectro_z_spe_qso_candidates_deep',
+            'deep',
+        )
+
+        query = archive.euclid.launch_job.call_args.args[0]
+        assert 'ORDER BY' not in query
+
+    def test_query_zspe_candidates_full_async_wide_union_query(self, tmp_path):
+        """WIDE full_async should use one server-side union fallback query."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+        archive.euclid = Mock()
+        job = Mock()
+        job.jobid = 'wide-job'
+        job.get_results.return_value = Table({
+            'object_id': [1, 2],
+            'spe_rank': [1, 1],
+            'spe_z': [2.0, 1.0],
+            'spe_z_err': [0.1, 0.2],
+            'source_table': ['wide_survey', 'wide'],
+        })
+        archive.euclid.launch_job_async.return_value = job
+
+        meta = archive.query_zspe_candidates(
+            crossmatch_table=Table({'object_id': [1, 2], 'label': ['a', 'b']}),
+            output_file=tmp_path / 'zs.fits',
+            object_type='qso',
+            idr_field='WIDE',
+            full_async=True,
+        )
+
+        query = archive.euclid.launch_job_async.call_args.args[0]
+        assert 'catalogue.spectro_z_spe_qso_candidates_wide_survey' in query
+        assert 'catalogue.spectro_z_spe_qso_candidates_wide' in query
+        assert 'UNION ALL' in query
+        assert 'NOT EXISTS' in query
+        assert 'ORDER BY' not in query
+        assert meta['results_downloaded'] is True
+        assert meta['result_row_count'] == 2
+        saved = Table.read(tmp_path / 'zs.fits', format='fits')
+        assert 'label' in saved.colnames
+        assert 'spe_rank' in saved.colnames
+        assert 'spe_z' in saved.colnames
+        assert 'spe_z_err' in saved.colnames
+        assert 'source_table' not in saved.colnames
+
+    def test_query_zspe_candidates_full_async_deep_single_table(self, tmp_path):
+        """DEEP full_async should query only the deep candidate table."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+        archive.euclid = Mock()
+        job = Mock()
+        job.jobid = 'deep-job'
+        job.get_results.return_value = Table({
+            'object_id': [1],
+            'spe_rank': [1],
+            'spe_z': [0.5],
+            'spe_z_err': [0.1],
+            'source_table': ['deep'],
+        })
+        archive.euclid.launch_job_async.return_value = job
+
+        archive.query_zspe_candidates(
+            crossmatch_table=Table({'object_id': [1], 'label': ['a']}),
+            output_file=tmp_path / 'deep.fits',
+            object_type='galaxy',
+            idr_field='DEEP',
+            full_async=True,
+        )
+
+        query = archive.euclid.launch_job_async.call_args.args[0]
+        assert 'catalogue.spectro_z_spe_galaxy_candidates_deep' in query
+        assert 'wide_survey' not in query
+        assert 'UNION ALL' not in query
+        assert 'ORDER BY' not in query
+        saved = Table.read(tmp_path / 'deep.fits', format='fits')
+        assert 'label' in saved.colnames
+        assert 'source_table' not in saved.colnames
+
+    def test_query_zspe_candidates_full_async_download_failure_writes_job_info(self, tmp_path):
+        """Full async should preserve job metadata when immediate download fails."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+        archive.euclid = Mock()
+        job = Mock()
+        job.jobid = 'failed-job'
+        job.get_results.side_effect = RuntimeError('not ready')
+        archive.euclid.launch_job_async.return_value = job
+        output_path = tmp_path / 'failed.fits'
+
+        meta = archive.query_zspe_candidates(
+            crossmatch_table=Table({'object_id': [1]}),
+            output_file=output_path,
+            full_async=True,
+        )
+
+        assert meta['results_downloaded'] is False
+        assert meta['download_error'] == 'not ready'
+        assert Path(meta['job_info_file']).exists()
+
+    def test_query_zspe_candidates_full_async_chunked_merges_manifest(self, tmp_path):
+        """Chunked zspe full_async should save parts, manifest, and merged output."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+        archive.euclid = Mock()
+        jobs = []
+        for idx in range(2):
+            job = Mock()
+            job.jobid = f'chunk-{idx}'
+            job.get_results.return_value = Table({
+                'object_id': [idx + 1],
+                'spe_rank': [1],
+                'spe_z': [idx + 0.5],
+                'spe_z_err': [0.1],
+                'source_table': ['wide_survey'],
+            })
+            jobs.append(job)
+        archive.euclid.launch_job_async.side_effect = jobs
+        output_path = tmp_path / 'chunked.fits'
+
+        meta = archive.query_zspe_candidates(
+            crossmatch_table=Table({'object_id': [1, 2, 3], 'label': ['a', 'b', 'c']}),
+            output_file=output_path,
+            full_async=True,
+            async_chunk_size=2,
+        )
+
+        assert meta['results_downloaded'] is True
+        assert meta['chunk_count'] == 2
+        assert meta['result_row_count'] == 2
+        assert Path(meta['manifest_file']).exists()
+        assert output_path.exists()
+        saved = Table.read(output_path, format='fits')
+        assert 'label' in saved.colnames
+        assert 'source_table' not in saved.colnames
+
     @patch('euclidkit.core.data_access.Euclid')
     def test_login_default_credentials(self, mock_euclid_class):
         """Test login with default credentials."""
