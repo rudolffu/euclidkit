@@ -275,6 +275,7 @@ class EuclidArchive:
         max_sources: Optional[int] = None,
         use_object_id: Optional[bool] = None,
         idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
         full_async: bool = False,
         async_chunk_size: int = 500000,
     ) -> Union[Table, Dict[str, Any]]:
@@ -306,6 +307,8 @@ class EuclidArchive:
         idr_field : {'WIDE', 'DEEP'}, optional
             IDR field selector. Only used when environment='IDR' and mer_table is not
             explicitly provided. Defaults to 'WIDE'.
+        idr_deep_partition : {'survey', 'mode', 'both'}, default 'survey'
+            IDR DEEP MER partition to query when ``idr_field='DEEP'``.
         full_async : bool, optional
             If True, use asynchronous TAP submission mode.
             For tables larger than ``async_chunk_size``, the table is split into
@@ -349,7 +352,10 @@ class EuclidArchive:
         
         # Determine MER table name(s) based on environment. IDR WIDE spans two
         # MER tables; explicit mer_table overrides keep single-table behavior.
-        mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(idr_field=idr_field)
+        mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(
+            idr_field=idr_field,
+            idr_deep_partition=idr_deep_partition,
+        )
         use_wide_fallback = self._uses_idr_wide_fallback(mer_tables)
 
         # Decide matching mode
@@ -426,6 +432,7 @@ class EuclidArchive:
                     'mer_tables': mer_tables,
                     'wide_fallback_mode': use_wide_fallback,
                     'idr_field': idr_field.upper() if idr_field else None,
+                    'idr_deep_partition': idr_deep_partition.lower(),
                     'output_file': str(output_path),
                     'chunks': [],
                 }
@@ -643,6 +650,7 @@ class EuclidArchive:
                     'output_file': str(output_path),
                     'manifest_file': str(manifest_path),
                     'idr_field': idr_field.upper() if idr_field else None,
+                    'idr_deep_partition': idr_deep_partition.lower(),
                 }
 
             job_infos = []
@@ -669,6 +677,7 @@ class EuclidArchive:
                     ra_col=ra_col,
                     dec_col=dec_col,
                     idr_field=idr_field,
+                    idr_deep_partition=idr_deep_partition,
                     row_count=len(user_data),
                 )
                 job_infos.append(job_info)
@@ -727,6 +736,7 @@ class EuclidArchive:
                         ra_col=ra_col,
                         dec_col=dec_col,
                         idr_field=idr_field,
+                        idr_deep_partition=idr_deep_partition,
                         row_count=len(unmatched_data),
                     )
                     job_infos.append(job_info)
@@ -769,6 +779,7 @@ class EuclidArchive:
                 'ra_column': ra_col,
                 'dec_column': dec_col,
                 'idr_field': idr_field.upper() if idr_field else None,
+                'idr_deep_partition': idr_deep_partition.lower(),
                 'query': job_infos[0].get('query') if len(job_infos) == 1 else None,
                 'queries': [info.get('query') for info in job_infos],
                 'results_downloaded': results_downloaded,
@@ -1064,6 +1075,7 @@ class EuclidArchive:
         max_sources: Optional[int] = None,
         use_object_id: Optional[bool] = None,
         idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
         full_async: bool = False,
     ) -> Union[Table, Dict[str, Any]]:
         """
@@ -1077,7 +1089,10 @@ class EuclidArchive:
             logger.warning("Not logged in - attempting login with default credentials")
             self.login()
 
-        mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(idr_field=idr_field)
+        mer_tables = [mer_table] if mer_table is not None else self._get_mer_table_names(
+            idr_field=idr_field,
+            idr_deep_partition=idr_deep_partition,
+        )
         use_wide_fallback = self._uses_idr_wide_fallback(mer_tables)
 
         user_table_ref = self._resolve_user_table_reference(user_table_name)
@@ -1315,6 +1330,8 @@ class EuclidArchive:
                 'mer_table': mer_tables[0] if len(mer_tables) == 1 else None,
                 'mer_tables': mer_tables,
                 'wide_fallback_mode': use_wide_fallback,
+                'idr_field': idr_field.upper() if idr_field else None,
+                'idr_deep_partition': idr_deep_partition.lower(),
                 'oid_column': oid_col,
                 'n_rows_detected': table_rows,
                 'n_rows_effective': effective_rows,
@@ -1441,6 +1458,8 @@ class EuclidArchive:
                     'chunk_count': len(manifest['chunks']),
                     'chunk_size': chunk_size,
                     'mer_tables': mer_tables,
+                    'idr_field': idr_field.upper() if idr_field else None,
+                    'idr_deep_partition': idr_deep_partition.lower(),
                     'output_file': str(output_path),
                     'manifest_file': str(manifest_path),
                     'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
@@ -1484,6 +1503,8 @@ class EuclidArchive:
                 'job_id': job_ids[0] if len(job_ids) == 1 else None,
                 'job_ids': job_ids,
                 'mer_tables': mer_tables,
+                'idr_field': idr_field.upper() if idr_field else None,
+                'idr_deep_partition': idr_deep_partition.lower(),
                 'results_downloaded': True,
                 'result_row_count': len(result) if result is not None else 0,
                 'output_file': str(output_file) if output_file else None,
@@ -1493,11 +1514,22 @@ class EuclidArchive:
 
         return result
     
-    def _get_mer_table_name(self, idr_field: Optional[str] = None) -> str:
+    def _get_mer_table_name(
+        self,
+        idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
+    ) -> str:
         """Get primary MER catalogue table name for current environment."""
-        return self._get_mer_table_names(idr_field=idr_field)[0]
+        return self._get_mer_table_names(
+            idr_field=idr_field,
+            idr_deep_partition=idr_deep_partition,
+        )[0]
 
-    def _get_mer_table_names(self, idr_field: Optional[str] = None) -> List[str]:
+    def _get_mer_table_names(
+        self,
+        idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
+    ) -> List[str]:
         """Get MER catalogue table names for current environment."""
         if self.environment == 'IDR':
             field = (idr_field or 'WIDE').upper()
@@ -1511,7 +1543,21 @@ class EuclidArchive:
                     'catalogue.mer_catalogue_wide_survey',
                     'catalogue.mer_catalogue_wide_mode',
                 ]
-            return ['catalogue.mer_catalogue_deep']
+            partition = (idr_deep_partition or 'survey').lower()
+            valid_partitions = {'survey', 'mode', 'both'}
+            if partition not in valid_partitions:
+                raise ValueError(
+                    f"Invalid IDR DEEP partition '{idr_deep_partition}'. "
+                    f"Expected one of {sorted(valid_partitions)}"
+                )
+            if partition == 'survey':
+                return ['catalogue.mer_catalogue_deep_survey']
+            if partition == 'mode':
+                return ['catalogue.mer_catalogue_deep_mode']
+            return [
+                'catalogue.mer_catalogue_deep_survey',
+                'catalogue.mer_catalogue_deep_mode',
+            ]
         
         table_names = {
             'PDR': 'catalogue.mer_catalogue',
@@ -1941,6 +1987,7 @@ class EuclidArchive:
         ra_col: str,
         dec_col: str,
         idr_field: Optional[str],
+        idr_deep_partition: str,
         row_count: int,
     ) -> Dict[str, Any]:
         """Create metadata dictionary for an asynchronous TAP job."""
@@ -1969,6 +2016,7 @@ class EuclidArchive:
             'ra_column': ra_col,
             'dec_column': dec_col,
             'idr_field': idr_field.upper() if idr_field else None,
+            'idr_deep_partition': idr_deep_partition.lower(),
             'query': submission.get('query'),
         }
         return job_info

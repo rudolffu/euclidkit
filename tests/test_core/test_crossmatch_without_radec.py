@@ -8,7 +8,7 @@ from astropy.table import Table
 from euclidkit.core.data_access import EuclidArchive
 
 
-def test_idr_wide_mer_table_names_include_survey_and_mode():
+def test_idr_mer_table_names_include_wide_and_deep_partitions():
     arch = EuclidArchive(environment='IDR')
 
     assert arch._get_mer_table_names(idr_field='WIDE') == [
@@ -16,7 +16,14 @@ def test_idr_wide_mer_table_names_include_survey_and_mode():
         'catalogue.mer_catalogue_wide_mode',
     ]
     assert arch._get_mer_table_name(idr_field='WIDE') == 'catalogue.mer_catalogue_wide_survey'
-    assert arch._get_mer_table_names(idr_field='DEEP') == ['catalogue.mer_catalogue_deep']
+    assert arch._get_mer_table_names(idr_field='DEEP') == ['catalogue.mer_catalogue_deep_survey']
+    assert arch._get_mer_table_names(idr_field='DEEP', idr_deep_partition='mode') == [
+        'catalogue.mer_catalogue_deep_mode',
+    ]
+    assert arch._get_mer_table_names(idr_field='DEEP', idr_deep_partition='both') == [
+        'catalogue.mer_catalogue_deep_survey',
+        'catalogue.mer_catalogue_deep_mode',
+    ]
 
 
 def test_crossmatch_sources_object_id_only_table(monkeypatch):
@@ -62,7 +69,7 @@ def test_crossmatch_sources_idr_field_selection(monkeypatch):
         arch.crossmatch_sources(user_table=user_table, radius=1.0)
         arch.crossmatch_sources(user_table=user_table, radius=1.0, idr_field='DEEP')
 
-    # IDR WIDE queries survey+mode; IDR DEEP queries a single MER table.
+    # IDR WIDE queries survey+mode; IDR DEEP defaults to deep_survey.
     assert mock_batch.call_count == 3
 
     first_call_args, _ = mock_batch.call_args_list[0]
@@ -71,7 +78,38 @@ def test_crossmatch_sources_idr_field_selection(monkeypatch):
 
     assert first_call_args[4] == 'catalogue.mer_catalogue_wide_survey'
     assert second_call_args[4] == 'catalogue.mer_catalogue_wide_mode'
-    assert third_call_args[4] == 'catalogue.mer_catalogue_deep'
+    assert third_call_args[4] == 'catalogue.mer_catalogue_deep_survey'
+
+
+def test_crossmatch_sources_idr_deep_both_queries_survey_then_mode():
+    """IDR DEEP both should query both partitions without WIDE fallback filtering."""
+    user_table = Table({'source_id': [123, 456], 'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
+    arch = EuclidArchive(environment='IDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+    seen_batches = []
+
+    def fake_batch(batch, ra_col, dec_col, radius, mer_table, use_object_id, force_async=False):
+        seen_batches.append((mer_table, list(batch['source_id'])))
+        if mer_table.endswith('_survey'):
+            return Table({'source_id': [123], 'object_id': [123], 'source_table': ['deep_survey']})
+        return Table({'source_id': [456], 'object_id': [456], 'source_table': ['deep_mode']})
+
+    with patch.object(arch, '_crossmatch_batch', side_effect=fake_batch):
+        out = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            use_object_id=True,
+            idr_field='DEEP',
+            idr_deep_partition='both',
+        )
+
+    assert len(out) == 2
+    assert list(out['source_table']) == ['deep_survey', 'deep_mode']
+    assert seen_batches == [
+        ('catalogue.mer_catalogue_deep_survey', [123, 456]),
+        ('catalogue.mer_catalogue_deep_mode', [123, 456]),
+    ]
 
 
 def test_crossmatch_sources_idr_wide_uses_mode_only_for_unmatched_rows():

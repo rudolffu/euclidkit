@@ -27,6 +27,8 @@ Commands that access the Euclid archive support:
 
 - ``--environment``: ``PDR``, ``IDR``, ``OTF``, ``REG``
 - ``--idr-field`` (IDR-only commands): ``WIDE`` or ``DEEP``
+- ``--idr-deep-partition`` for MER-based IDR DEEP workflows:
+  ``survey`` (default), ``mode``, or ``both``
 
 crossmatch
 ----------
@@ -43,6 +45,18 @@ Example:
      --radius 1.0 \
      --environment IDR \
      --idr-field WIDE
+
+IDR DEEP partition example:
+
+.. code-block:: bash
+
+   euclidkit crossmatch \
+     --input my_sources.fits \
+     --output deep_mode_crossmatch.fits \
+     --match-mode object-id \
+     --environment IDR \
+     --idr-field DEEP \
+     --idr-deep-partition mode
 
 Archive user-table example (no re-upload):
 
@@ -70,6 +84,11 @@ Option semantics:
 
 - ``--max-sources`` limits total processed rows from the input table.
 - ``--async-chunk-size`` controls rows per async TAP job in ``--full-async`` mode.
+- ``--idr-deep-partition`` is used only with ``--environment IDR --idr-field DEEP``
+  for MER-based commands. ``survey`` queries
+  ``catalogue.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS), ``mode`` queries
+  ``catalogue.mer_catalogue_deep_mode`` (CDFS, COSMOS), and ``both`` queries
+  survey first and mode second. The default is ``survey``.
 
 ``--full-async`` behavior:
 
@@ -109,6 +128,21 @@ Example:
      --sources my_sources.fits \
      --output cutana_input.csv \
      --instrument VIS \
+     --cutout-size arcsec \
+     --cutout-size-value 15
+
+IDR DEEP example:
+
+.. code-block:: bash
+
+   euclidkit query-cutana \
+     --sources my_sources.fits \
+     --output cutana_deep.csv \
+     --instrument NISP \
+     --nisp-filters NIR_Y,NIR_H \
+     --environment IDR \
+     --idr-field DEEP \
+     --idr-deep-partition both \
      --cutout-size arcsec \
      --cutout-size-value 15
 

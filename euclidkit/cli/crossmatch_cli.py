@@ -27,6 +27,11 @@ from typing import Optional
 @click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
               help='IDR field selection (only used when --environment=IDR)')
+@click.option('--idr-deep-partition',
+              type=click.Choice(['survey', 'mode', 'both']),
+              default='survey',
+              show_default=True,
+              help='IDR DEEP MER partition to query')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--max-sources', type=int,
@@ -39,7 +44,7 @@ from typing import Optional
               help='Rows per async chunk when --full-async is used on large tables')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str, radius: float, ra_col: str, dec_col: str,
-               environment: str, idr_field: str, credentials: Optional[str],
+               environment: str, idr_field: str, idr_deep_partition: str, credentials: Optional[str],
                max_sources: Optional[int], match_mode: str, full_async: bool,
                async_chunk_size: int, verbose: bool):
     """
@@ -86,6 +91,8 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
                 click.echo(f"Processing max {max_sources} sources")
             if environment == 'IDR':
                 click.echo(f"IDR field: {selected_idr_field}")
+                if selected_idr_field == 'DEEP':
+                    click.echo(f"IDR DEEP partition: {idr_deep_partition}")
             if full_async:
                 click.echo("Full-table async mode enabled (no batching)")
                 click.echo(f"Async chunk size: {async_chunk_size}")
@@ -119,6 +126,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
             )
             if environment == 'IDR':
                 crossmatch_kwargs['idr_field'] = selected_idr_field
+                crossmatch_kwargs['idr_deep_partition'] = idr_deep_partition
             results = archive.crossmatch_user_table(**crossmatch_kwargs)
         else:
             crossmatch_kwargs = dict(
@@ -134,6 +142,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
             )
             if environment == 'IDR':
                 crossmatch_kwargs['idr_field'] = selected_idr_field
+                crossmatch_kwargs['idr_deep_partition'] = idr_deep_partition
             results = archive.crossmatch_sources(**crossmatch_kwargs)
         
         if full_async:
@@ -418,12 +427,18 @@ def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
 @click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
               help='IDR field selection (only used when --environment=IDR)')
+@click.option('--idr-deep-partition',
+              type=click.Choice(['survey', 'mode', 'both']),
+              default='survey',
+              show_default=True,
+              help='IDR DEEP MER partition to query')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optional[str],
                  cutout_size: str, cutout_size_value: float, drop_noncutana_cols: bool,
-                 environment: str, idr_field: str, credentials: Optional[str], verbose: bool):
+                 environment: str, idr_field: str, idr_deep_partition: str,
+                 credentials: Optional[str], verbose: bool):
     """
     Generate a Cutana input catalogue from a source table.
 
@@ -462,6 +477,7 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
             cutout_size_value=cutout_size_value,
             drop_noncutana_cols=drop_noncutana_cols,
             idr_field=idr_field.upper() if environment == 'IDR' else None,
+            idr_deep_partition=idr_deep_partition,
         )
 
         click.echo(f"Cutana query completed: {len(result_df)} sources with mosaic matches")

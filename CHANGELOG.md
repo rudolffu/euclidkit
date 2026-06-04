@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- IDR DEEP MER partition selection via `idr_deep_partition` and
+  `--idr-deep-partition` for MER crossmatch and Cutana workflows.
+
+### Changed
+- IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by
+  default, with optional `deep_mode` or `both` partition selection.
+
 ## [0.2.0] - 2026-03-02
 
 ### Added

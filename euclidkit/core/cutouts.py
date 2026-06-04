@@ -144,6 +144,7 @@ class CutoutGenerator:
         cutout_size_value: float = 15.0,
         drop_noncutana_cols: bool = True,
         idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
     ) -> pd.DataFrame:
         """
         Generate a Cutana-compatible source catalogue from source coordinates.
@@ -173,6 +174,8 @@ class CutoutGenerator:
             IDR field selector used when resolving ``object_id`` values to
             coordinates in ``environment='IDR'``. Defaults to 'WIDE' when
             omitted, matching ``EuclidArchive.crossmatch_sources`` behavior.
+        idr_deep_partition : {'survey', 'mode', 'both'}, default 'survey'
+            IDR DEEP MER partition used when ``idr_field='DEEP'``.
 
         Returns
         -------
@@ -191,7 +194,11 @@ class CutoutGenerator:
         if len(df_input) == 0:
             raise ValueError("No sources found in input")
 
-        df_coords = self._resolve_coordinates(df_input, idr_field=idr_field)
+        df_coords = self._resolve_coordinates(
+            df_input,
+            idr_field=idr_field,
+            idr_deep_partition=idr_deep_partition,
+        )
         if len(df_coords) == 0:
             raise ValueError("Could not resolve source coordinates from input")
 
@@ -336,17 +343,30 @@ class CutoutGenerator:
         
         return df_files
     
-    def _resolve_coordinates(self, df: pd.DataFrame, idr_field: Optional[str] = None) -> pd.DataFrame:
+    def _resolve_coordinates(
+        self,
+        df: pd.DataFrame,
+        idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
+    ) -> pd.DataFrame:
         """Resolve source rows to include coordinates and segmentation_map_id."""
         
         # If object IDs are present, always resolve via MER to obtain segmentation_map_id.
         if 'object_id' in df.columns:
-            return self._lookup_mer_source_info(df, idr_field=idr_field)
+            return self._lookup_mer_source_info(
+                df,
+                idr_field=idr_field,
+                idr_deep_partition=idr_deep_partition,
+            )
 
         # If we only have coordinates, spatially crossmatch once against MER to obtain
         # object_id and segmentation_map_id, then continue with segmentation-based joins.
         if self._has_coordinates(df):
-            return self._lookup_mer_source_info_by_position(df, idr_field=idr_field)
+            return self._lookup_mer_source_info_by_position(
+                df,
+                idr_field=idr_field,
+                idr_deep_partition=idr_deep_partition,
+            )
         
         logger.error("No coordinates or object_ids found in sources")
         return pd.DataFrame()
@@ -357,7 +377,12 @@ class CutoutGenerator:
         return (('ra' in cols and 'dec' in cols) or 
                 ('right_ascension' in cols and 'declination' in cols))
     
-    def _lookup_mer_source_info(self, df: pd.DataFrame, idr_field: Optional[str] = None) -> pd.DataFrame:
+    def _lookup_mer_source_info(
+        self,
+        df: pd.DataFrame,
+        idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
+    ) -> pd.DataFrame:
         """Look up MER source metadata from object_ids via archive query."""
         
         if not self.archive._logged_in:
@@ -366,7 +391,10 @@ class CutoutGenerator:
         df = df.copy()
 
         # Reuse environment-specific MER selection from EuclidArchive.
-        table_names = self.archive._get_mer_table_names(idr_field=idr_field)
+        table_names = self.archive._get_mer_table_names(
+            idr_field=idr_field,
+            idr_deep_partition=idr_deep_partition,
+        )
 
         # Upload object IDs and perform a server-side join, matching data_access.py pattern.
         upload_df = df[['object_id']].drop_duplicates().copy()
@@ -488,6 +516,7 @@ class CutoutGenerator:
         self,
         df: pd.DataFrame,
         idr_field: Optional[str] = None,
+        idr_deep_partition: str = 'survey',
         radius_arcsec: float = 1.0,
     ) -> pd.DataFrame:
         """
@@ -511,6 +540,7 @@ class CutoutGenerator:
                 dec_col=dec_col,
                 use_object_id=False,
                 idr_field=idr_field,
+                idr_deep_partition=idr_deep_partition,
             )
             if len(match_table) == 0:
                 return pd.DataFrame()

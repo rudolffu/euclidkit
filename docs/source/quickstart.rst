@@ -14,6 +14,19 @@ Crossmatch sources:
      --radius 1.0 \
      --environment PDR
 
+For IDR DEEP MER data, the default partition is ``survey``. Use
+``--idr-deep-partition mode`` for CDFS/COSMOS, or ``both`` to query survey
+first and mode second:
+
+.. code-block:: bash
+
+   euclidkit crossmatch \
+     --input my_deep_sources.fits \
+     --output deep_crossmatch_results.fits \
+     --environment IDR \
+     --idr-field DEEP \
+     --idr-deep-partition both
+
 Query spectra for crossmatched objects:
 
 .. code-block:: bash
@@ -58,6 +71,13 @@ Python API example
        user_table="my_sources.csv",
        radius=1.0,
        output_file="crossmatch_results.fits",
+   )
+
+   deep_xmatch = archive.crossmatch_sources(
+       user_table="my_deep_sources.fits",
+       output_file="deep_crossmatch_results.fits",
+       idr_field="DEEP",
+       idr_deep_partition="survey",
    )
 
    spectra = archive.query_spectra_sources(

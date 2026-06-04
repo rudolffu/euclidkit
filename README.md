@@ -121,12 +121,22 @@ euclidkit crossmatch \
     --async-chunk-size 500000
 
 # When using the IDR environment the command defaults to the WIDE field and
-# writes results to wide_<filename>. Use --idr-field DEEP to query the deep stack:
+# writes results to wide_<filename>. Use --idr-field DEEP to query DEEP MER.
+# DEEP defaults to the deep_survey partition (EDFN, EDFF, EDFS).
 euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
     --environment IDR \
     --idr-field DEEP
+
+# Query the deep_mode partition (CDFS, COSMOS), or use "both" for
+# deep_survey followed by deep_mode.
+euclidkit crossmatch \
+    --input my_sources.csv \
+    --output crossmatch_results.fits \
+    --environment IDR \
+    --idr-field DEEP \
+    --idr-deep-partition mode
 
 # Crossmatch an already-uploaded archive user table (no local upload needed)
 euclidkit crossmatch \
@@ -207,6 +217,7 @@ euclidkit query-cutana \
     --nisp-filters NIR_Y,NIR_H \
     --environment IDR \
     --idr-field DEEP \
+    --idr-deep-partition both \
     --cutout-size arcsec \
     --cutout-size-value 15
 ```
@@ -417,8 +428,15 @@ archive backend:
 
 For **IDR**, you can also select the field with ``--idr-field``:
 
-- **WIDE**: Uses the IDR WIDE MER catalogue.
-- **DEEP**: Uses the IDR DEEP MER catalogue.
+- **WIDE**: Uses the IDR WIDE MER catalogue. This queries
+  ``catalogue.mer_catalogue_wide_survey`` first, then queries
+  ``catalogue.mer_catalogue_wide_mode`` only for sources not matched in the
+  survey table.
+- **DEEP**: Uses IDR DEEP MER partitions. By default this queries
+  ``catalogue.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS). Use
+  ``--idr-deep-partition mode`` for ``catalogue.mer_catalogue_deep_mode``
+  (CDFS, COSMOS), or ``--idr-deep-partition both`` to query survey first and
+  mode second.
 
 Examples:
 
@@ -436,6 +454,14 @@ euclidkit crossmatch \
   --output xmatch_deep.fits \
   --environment IDR \
   --idr-field DEEP
+
+# IDR DEEP mode partition
+euclidkit crossmatch \
+  --input my_sources.fits \
+  --output xmatch_deep_mode.fits \
+  --environment IDR \
+  --idr-field DEEP \
+  --idr-deep-partition mode
 ```
 
 ## Contributing
