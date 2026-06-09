@@ -112,6 +112,13 @@ euclidkit crossmatch \
     --radius 1.0 \
     --verbose
 
+# Optionally remove columns that are entirely null/missing from the final
+# output table. Zero, False, and empty-string columns are retained.
+euclidkit crossmatch \
+    --input my_sources.csv \
+    --output crossmatch_results.fits \
+    --drop-empty-columns
+
 # Submit the entire table as a single async job (no batching). The output file
 # uses async TAP mode; for very large tables euclidkit splits into async chunks.
 euclidkit crossmatch \
@@ -161,6 +168,7 @@ Matching mode recommendation:
 
 - `--max-sources`: limits how many rows from the input table are processed in total.
 - `--async-chunk-size`: controls rows per async TAP job when `--full-async` is enabled.
+- `--drop-empty-columns`: drops columns where every result value is null or missing before saving the final `--output` table. Intermediate async part files are left unchanged.
 
 ### Uploading Tables
 

@@ -80,10 +80,22 @@ Large-table async example:
      --full-async \
      --async-chunk-size 500000
 
+Drop empty result columns:
+
+.. code-block:: bash
+
+   euclidkit crossmatch \
+     --input my_sources.fits \
+     --output crossmatch_results.fits \
+     --drop-empty-columns
+
 Option semantics:
 
 - ``--max-sources`` limits total processed rows from the input table.
 - ``--async-chunk-size`` controls rows per async TAP job in ``--full-async`` mode.
+- ``--drop-empty-columns`` removes columns where every final result value is
+  null or missing before saving ``--output``. Zero, ``False``, and empty-string
+  columns are retained. Async chunk part files remain raw.
 - ``--idr-deep-partition`` is used only with ``--environment IDR --idr-field DEEP``
   for MER-based commands. ``survey`` queries
   ``catalogue.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS), ``mode`` queries

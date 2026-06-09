@@ -167,6 +167,63 @@ class EuclidArchive:
             )
 
         return renamed, mapping
+
+    @staticmethod
+    def _is_missing_table_value(value: Any) -> bool:
+        """Return True for null-like scalar values, preserving falsey real values."""
+        if np.ma.is_masked(value) or value is None:
+            return True
+
+        try:
+            missing = pd.isna(value)
+        except (TypeError, ValueError):
+            return False
+
+        if isinstance(missing, (np.ndarray, list, tuple)):
+            return bool(np.all(missing))
+        try:
+            if hasattr(missing, 'item'):
+                missing = missing.item()
+            return bool(missing)
+        except (TypeError, ValueError):
+            return False
+
+    def _drop_empty_table_columns(self, table: Table) -> Tuple[Table, List[str]]:
+        """
+        Remove columns where every row is null/missing.
+
+        Empty strings, zero, and False are retained as real values. Zero-row
+        tables are returned unchanged to avoid dropping schema by vacuous truth.
+        """
+        if table is None or len(table) == 0:
+            return table.copy() if table is not None else Table(), []
+
+        dropped = [
+            colname
+            for colname in table.colnames
+            if all(self._is_missing_table_value(value) for value in table[colname])
+        ]
+        if not dropped:
+            return table.copy(), []
+
+        cleaned = table.copy()
+        cleaned.remove_columns(dropped)
+        logger.info(
+            "Dropped %d entirely empty crossmatch result column(s): %s",
+            len(dropped),
+            ", ".join(dropped),
+        )
+        return cleaned, dropped
+
+    def _finalize_crossmatch_result(
+        self,
+        table: Table,
+        drop_empty_columns: bool,
+    ) -> Tuple[Table, List[str]]:
+        """Apply optional final crossmatch result cleanup before save/return."""
+        if not drop_empty_columns:
+            return table, []
+        return self._drop_empty_table_columns(table)
     
     def login(
         self,
@@ -278,6 +335,7 @@ class EuclidArchive:
         idr_deep_partition: str = 'survey',
         full_async: bool = False,
         async_chunk_size: int = 500000,
+        drop_empty_columns: bool = False,
     ) -> Union[Table, Dict[str, Any]]:
         """
         Crossmatch user table with Euclid MER catalogue.
@@ -316,6 +374,9 @@ class EuclidArchive:
         async_chunk_size : int, optional
             Chunk size (rows per async job) used when ``full_async=True`` for
             large input tables. Default is 500000.
+        drop_empty_columns : bool, default False
+            If True, drop columns that are entirely null/missing from the final
+            crossmatch result before saving and returning it.
             
         Returns
         -------
@@ -625,7 +686,13 @@ class EuclidArchive:
                     final_result = self._combine_mer_results(merge_tables)
                 else:
                     final_result = Table()
+                final_result, dropped_empty_columns = self._finalize_crossmatch_result(
+                    final_result,
+                    drop_empty_columns,
+                )
                 manifest['query_count'] = len(manifest['chunks'])
+                manifest['dropped_empty_columns'] = dropped_empty_columns
+                manifest['dropped_empty_column_count'] = len(dropped_empty_columns)
                 with open(manifest_path, 'w', encoding='utf-8') as fh:
                     json.dump(manifest, fh, indent=2)
 
@@ -651,6 +718,8 @@ class EuclidArchive:
                     'manifest_file': str(manifest_path),
                     'idr_field': idr_field.upper() if idr_field else None,
                     'idr_deep_partition': idr_deep_partition.lower(),
+                    'dropped_empty_columns': dropped_empty_columns,
+                    'dropped_empty_column_count': len(dropped_empty_columns),
                 }
 
             job_infos = []
@@ -764,6 +833,10 @@ class EuclidArchive:
                         )
 
             final_result = self._combine_mer_results(async_results)
+            final_result, dropped_empty_columns = self._finalize_crossmatch_result(
+                final_result,
+                drop_empty_columns and len(download_errors) == 0,
+            )
             results_downloaded = len(download_errors) == 0
             result_row_count = len(final_result)
             combined_job_info = {
@@ -785,6 +858,8 @@ class EuclidArchive:
                 'results_downloaded': results_downloaded,
                 'result_row_count': result_row_count,
                 'download_error': '; '.join(download_errors) if download_errors else None,
+                'dropped_empty_columns': dropped_empty_columns,
+                'dropped_empty_column_count': len(dropped_empty_columns),
             }
 
             if results_downloaded:
@@ -881,6 +956,10 @@ class EuclidArchive:
         else:
             logger.warning("No crossmatches found")
             return Table()
+        final_result, _ = self._finalize_crossmatch_result(
+            final_result,
+            drop_empty_columns,
+        )
         
         logger.info(f"Found {len(final_result)} crossmatches")
         
@@ -1077,6 +1156,7 @@ class EuclidArchive:
         idr_field: Optional[str] = None,
         idr_deep_partition: str = 'survey',
         full_async: bool = False,
+        drop_empty_columns: bool = False,
     ) -> Union[Table, Dict[str, Any]]:
         """
         Crossmatch an existing archive user table against MER without re-upload.
@@ -1438,6 +1518,14 @@ class EuclidArchive:
                 final_result = self._combine_mer_results(merge_tables)
             else:
                 final_result = Table()
+            final_result, dropped_empty_columns = self._finalize_crossmatch_result(
+                final_result,
+                drop_empty_columns,
+            )
+            manifest['dropped_empty_columns'] = dropped_empty_columns
+            manifest['dropped_empty_column_count'] = len(dropped_empty_columns)
+            with open(manifest_path, 'w', encoding='utf-8') as fh:
+                json.dump(manifest, fh, indent=2)
 
             save_table(final_result, output_path)
             logger.info(
@@ -1463,6 +1551,8 @@ class EuclidArchive:
                     'output_file': str(output_path),
                     'manifest_file': str(manifest_path),
                     'job_ids': [c.get('job_id') for c in manifest['chunks'] if c.get('job_id')],
+                    'dropped_empty_columns': dropped_empty_columns,
+                    'dropped_empty_column_count': len(dropped_empty_columns),
                 }
             return final_result
 
@@ -1489,6 +1579,10 @@ class EuclidArchive:
                 results.append(result)
 
         result = self._combine_mer_results(results)
+        result, dropped_empty_columns = self._finalize_crossmatch_result(
+            result,
+            drop_empty_columns,
+        )
 
         if output_file:
             save_table(result, output_file)
@@ -1510,6 +1604,8 @@ class EuclidArchive:
                 'output_file': str(output_file) if output_file else None,
                 'query': queries[0] if len(queries) == 1 else None,
                 'queries': queries,
+                'dropped_empty_columns': dropped_empty_columns,
+                'dropped_empty_column_count': len(dropped_empty_columns),
             }
 
         return result

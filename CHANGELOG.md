@@ -10,6 +10,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 - IDR DEEP MER partition selection via `idr_deep_partition` and
   `--idr-deep-partition` for MER crossmatch and Cutana workflows.
+- Optional empty-column pruning for crossmatch outputs via
+  `drop_empty_columns` and `euclidkit crossmatch --drop-empty-columns`.
 
 ### Changed
 - IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by

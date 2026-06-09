@@ -42,11 +42,13 @@ from typing import Optional
               help='Use asynchronous TAP mode; very large tables are split into async chunks')
 @click.option('--async-chunk-size', type=int, default=500000, show_default=True,
               help='Rows per async chunk when --full-async is used on large tables')
+@click.option('--drop-empty-columns', is_flag=True,
+              help='Drop entirely null/missing columns from the final crossmatch output')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str, radius: float, ra_col: str, dec_col: str,
                environment: str, idr_field: str, idr_deep_partition: str, credentials: Optional[str],
                max_sources: Optional[int], match_mode: str, full_async: bool,
-               async_chunk_size: int, verbose: bool):
+               async_chunk_size: int, drop_empty_columns: bool, verbose: bool):
     """
     Crossmatch user source table with Euclid MER catalogue.
     
@@ -96,6 +98,8 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
             if full_async:
                 click.echo("Full-table async mode enabled (no batching)")
                 click.echo(f"Async chunk size: {async_chunk_size}")
+            if drop_empty_columns:
+                click.echo("Dropping entirely empty columns from final output")
 
         # Determine effective output path (IDR requires prefixed filenames)
         output_path = Path(output)
@@ -123,6 +127,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
                 max_sources=max_sources,
                 use_object_id=use_object_id,
                 full_async=full_async,
+                drop_empty_columns=drop_empty_columns,
             )
             if environment == 'IDR':
                 crossmatch_kwargs['idr_field'] = selected_idr_field
@@ -139,6 +144,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
                 use_object_id=use_object_id,
                 full_async=full_async,
                 async_chunk_size=async_chunk_size,
+                drop_empty_columns=drop_empty_columns,
             )
             if environment == 'IDR':
                 crossmatch_kwargs['idr_field'] = selected_idr_field

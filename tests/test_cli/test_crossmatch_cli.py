@@ -233,6 +233,52 @@ class TestCrossmatchCLI:
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 
+    def test_crossmatch_drop_empty_columns_option_local_input(self):
+        """Drop-empty-columns flag should propagate for local input mode."""
+        input_file = self.create_temp_input_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.crossmatch_sources.return_value = Table({'object_id': [1]})
+
+                    result = self.runner.invoke(crossmatch, [
+                        '--input', input_file,
+                        '--output', output_file.name,
+                        '--drop-empty-columns',
+                    ])
+
+                    assert result.exit_code == 0
+                    call_args = mock_archive.crossmatch_sources.call_args
+                    assert call_args.kwargs['drop_empty_columns'] is True
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_crossmatch_drop_empty_columns_option_user_table(self):
+        """Drop-empty-columns flag should propagate for archive user-table mode."""
+        with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+            try:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.crossmatch_user_table.return_value = Table({'object_id': [1]})
+
+                    result = self.runner.invoke(crossmatch, [
+                        '--user-table-name', 'my_table',
+                        '--output', output_file.name,
+                        '--drop-empty-columns',
+                    ])
+
+                    assert result.exit_code == 0
+                    call_args = mock_archive.crossmatch_user_table.call_args
+                    assert call_args.kwargs['drop_empty_columns'] is True
+            finally:
+                if os.path.exists(output_file.name):
+                    os.unlink(output_file.name)
+
     def test_upload_table_cli_job_submission(self):
         """Uploading a table should call archive helper and report job info."""
         input_file = self.create_temp_input_file()

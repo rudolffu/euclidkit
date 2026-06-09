@@ -3,9 +3,47 @@
 import json
 from unittest.mock import Mock, patch
 
-from astropy.table import Table
+import numpy as np
+from astropy.table import MaskedColumn, Table
 
 from euclidkit.core.data_access import EuclidArchive
+
+
+def test_drop_empty_table_columns_null_semantics():
+    """Only all-null/missing columns should be pruned."""
+    arch = EuclidArchive(environment='PDR')
+    table = Table()
+    table['object_id'] = [1, 2]
+    table['drop_none'] = [None, None]
+    table['drop_nan'] = [np.nan, np.nan]
+    table['drop_masked'] = MaskedColumn([10, 20], mask=[True, True])
+    table['keep_partial'] = [None, 3]
+    table['keep_zero'] = [0, 0]
+    table['keep_false'] = [False, False]
+    table['keep_empty_string'] = ['', '']
+
+    cleaned, dropped = arch._drop_empty_table_columns(table)
+
+    assert dropped == ['drop_none', 'drop_nan', 'drop_masked']
+    assert cleaned.colnames == [
+        'object_id',
+        'keep_partial',
+        'keep_zero',
+        'keep_false',
+        'keep_empty_string',
+    ]
+    assert len(cleaned) == len(table)
+
+
+def test_drop_empty_table_columns_keeps_zero_row_schema():
+    """Zero-row tables should not lose schema by vacuous truth."""
+    arch = EuclidArchive(environment='PDR')
+    table = Table({'object_id': [], 'empty_float': []}, dtype=[int, float])
+
+    cleaned, dropped = arch._drop_empty_table_columns(table)
+
+    assert dropped == []
+    assert cleaned.colnames == ['object_id', 'empty_float']
 
 
 def test_idr_mer_table_names_include_wide_and_deep_partitions():
@@ -140,6 +178,57 @@ def test_crossmatch_sources_idr_wide_uses_mode_only_for_unmatched_rows():
         ('catalogue.mer_catalogue_wide_survey', [123, 456]),
         ('catalogue.mer_catalogue_wide_mode', [456]),
     ]
+
+
+def test_crossmatch_sources_drop_empty_columns_sync_output(tmp_path):
+    """Sync local crossmatch should prune final table before save and return."""
+    user_table = Table({'source_id': [1, 2], 'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
+    arch = EuclidArchive(environment='PDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+    batch_result = Table({
+        'source_id': [1, 2],
+        'object_id': [101, 102],
+        'all_nan': [np.nan, np.nan],
+        'zero': [0, 0],
+        'empty_string': ['', ''],
+    })
+    output_path = tmp_path / 'sync_pruned.fits'
+
+    with patch.object(arch, '_crossmatch_batch', return_value=batch_result):
+        result = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            output_file=output_path,
+            drop_empty_columns=True,
+        )
+
+    saved = Table.read(output_path, format='fits')
+    assert 'all_nan' not in result.colnames
+    assert 'all_nan' not in saved.colnames
+    assert 'zero' in result.colnames
+    assert 'empty_string' in result.colnames
+
+
+def test_crossmatch_sources_keep_empty_columns_by_default(tmp_path):
+    """Default local crossmatch behavior should preserve empty columns."""
+    user_table = Table({'source_id': [1], 'ra': [150.0], 'dec': [2.0]})
+    arch = EuclidArchive(environment='PDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+    batch_result = Table({'source_id': [1], 'object_id': [101], 'all_nan': [np.nan]})
+    output_path = tmp_path / 'sync_default.fits'
+
+    with patch.object(arch, '_crossmatch_batch', return_value=batch_result):
+        result = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            output_file=output_path,
+        )
+
+    saved = Table.read(output_path, format='fits')
+    assert 'all_nan' in result.colnames
+    assert 'all_nan' in saved.colnames
 
 
 def test_spatial_crossmatch_contains_expression(monkeypatch):
@@ -302,3 +391,54 @@ def test_crossmatch_sources_full_async_chunked_persists_and_merges(tmp_path):
     arch.euclid.remove_jobs.assert_any_call(['job-10'])
     arch.euclid.remove_jobs.assert_any_call(['job-20'])
     arch.euclid.remove_jobs.assert_any_call(['job-30'])
+
+
+def test_crossmatch_sources_full_async_chunked_prunes_final_only(tmp_path):
+    """Chunk part files stay raw, while merged final output is pruned."""
+    user_table = Table({
+        'source_id': [1, 2, 3],
+        'ra': [150.0, 151.0, 152.0],
+        'dec': [2.0, 2.1, 2.2],
+    })
+    arch = EuclidArchive(environment='PDR')
+    arch.euclid = Mock()
+    arch._logged_in = True
+
+    def make_submission(start_value):
+        fake_job = Mock()
+        fake_job.jobid = f'job-{start_value}'
+        fake_job.get_results.return_value = Table({
+            'object_id': [start_value],
+            'all_nan': [np.nan],
+            'zero': [0],
+        })
+        return {
+            'job': fake_job,
+            'query': f'SELECT {start_value}',
+            'upload_table_name': f'user_batch_{start_value}',
+        }
+
+    output_path = tmp_path / 'merged_pruned.fits'
+    with patch.object(arch, '_crossmatch_batch', side_effect=[
+        make_submission(10),
+        make_submission(20),
+    ]):
+        job_info = arch.crossmatch_sources(
+            user_table=user_table,
+            radius=1.0,
+            full_async=True,
+            output_file=output_path,
+            async_chunk_size=2,
+            drop_empty_columns=True,
+        )
+
+    merged = Table.read(output_path, format='fits')
+    part_files = sorted(tmp_path.glob('merged_pruned_part_*.fits'))
+    manifest = json.loads((tmp_path / 'merged_pruned.fits.manifest.json').read_text())
+
+    assert 'all_nan' not in merged.colnames
+    assert 'zero' in merged.colnames
+    assert 'all_nan' in Table.read(part_files[0], format='fits').colnames
+    assert job_info['dropped_empty_columns'] == ['all_nan']
+    assert job_info['dropped_empty_column_count'] == 1
+    assert manifest['dropped_empty_columns'] == ['all_nan']

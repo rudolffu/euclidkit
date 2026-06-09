@@ -22,7 +22,13 @@ Typical usage:
        user_table="sources.csv",
        radius=1.0,
        output_file="results.fits",
+       drop_empty_columns=True,
    )
+
+``drop_empty_columns=True`` removes columns where every final crossmatch result
+value is null or missing before saving and returning the table. Zero, ``False``,
+and empty strings are preserved. For async crossmatch workflows, intermediate
+part files are left unchanged and only the final merged output is pruned.
 
 IDR DEEP MER partition selection:
 
