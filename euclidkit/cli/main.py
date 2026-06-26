@@ -18,6 +18,7 @@ from euclidkit.cli.crossmatch_cli import (
     query_zspe,
     query_cutana,
     compile_spectra,
+    dithers_to_parquet_cli,
     upload_table,
 )
 from euclidkit.cli.cutout_cli import cutouts
@@ -77,7 +78,7 @@ def diagnostics(check_deps: bool, check_data: bool, check_desi: bool):
     # Check dependencies
     if check_deps:
         try:
-            import numpy, scipy, matplotlib, astropy, astroquery, pandas
+            import numpy, scipy, matplotlib, astropy, astroquery, pandas, pyarrow
             import photutils, sep, skimage, tqdm, yaml, click, requests
             results['dependencies'] = {'passed': True, 'message': 'All core dependencies found'}
         except ImportError as e:
@@ -126,6 +127,7 @@ main.add_command(query_spectra, name='query-spectra')
 main.add_command(query_zspe, name='query-zspe')
 main.add_command(query_cutana, name='query-cutana')
 main.add_command(compile_spectra, name='compile-spectra')
+main.add_command(dithers_to_parquet_cli, name='dithers-to-parquet')
 main.add_command(upload_table)
 main.add_command(cutouts)
 main.add_command(select_footprint)

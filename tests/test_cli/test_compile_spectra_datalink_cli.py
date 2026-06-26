@@ -44,6 +44,7 @@ def test_compile_spectra_use_datalink_mode():
                         result = runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                        '--output-format', 'fits',
                             '--prefix', 'dl_compiled',
                             '--use-datalink',
                             '--environment', 'IDR',
@@ -91,6 +92,7 @@ def test_compile_spectra_non_empty_dir_uses_resume_mode_by_default():
                     result = runner.invoke(compile_spectra, [
                         '--spectra-table', spectra_file,
                         '--output-dir', output_dir,
+                        '--output-format', 'fits',
                         '--prefix', 'compiled',
                     ])
 
@@ -127,6 +129,7 @@ def test_compile_spectra_workers_passed_to_canonical_compile():
                     result = runner.invoke(compile_spectra, [
                         '--spectra-table', spectra_file,
                         '--output-dir', output_dir,
+                        '--output-format', 'fits',
                         '--workers', '2',
                     ])
 
@@ -161,6 +164,7 @@ def test_compile_spectra_non_deep_lambda_fallback_warns():
                     result = runner.invoke(compile_spectra, [
                         '--spectra-table', spectra_file,
                         '--output-dir', output_dir,
+                        '--output-format', 'fits',
                         '--environment', 'PDR',
                         '-L', 'BOTH',
                     ])
@@ -217,6 +221,7 @@ def test_compile_spectra_idr_deep_both_splits_outputs():
                     result = runner.invoke(compile_spectra, [
                         '--spectra-table', spectra_file,
                         '--output-dir', output_dir,
+                        '--output-format', 'fits',
                         '--prefix', 'myprefix',
                         '--environment', 'IDR',
                         '--idr-field', 'DEEP',
@@ -268,6 +273,7 @@ def test_compile_spectra_datalink_deduplicates_source_rows():
                         result = runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                        '--output-format', 'fits',
                             '--use-datalink',
                         ])
 
@@ -315,6 +321,7 @@ def test_compile_spectra_datalink_lambda_range_maps_to_retrieval_type_all():
                         result = runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                        '--output-format', 'fits',
                             '--use-datalink',
                             '-L', 'BOTH',
                         ])
@@ -358,6 +365,7 @@ def test_compile_spectra_datalink_conflict_lambda_vs_retrieval_prefers_lambda():
                         result = runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                        '--output-format', 'fits',
                             '--use-datalink',
                             '-L', 'BGS',
                             '--retrieval-type', 'SPECTRA_RGS',
@@ -370,3 +378,135 @@ def test_compile_spectra_datalink_conflict_lambda_vs_retrieval_prefers_lambda():
     finally:
         if os.path.exists(spectra_file):
             os.unlink(spectra_file)
+
+
+def test_compile_spectra_default_uses_parquet_export(tmp_path):
+    """Non-datalink compile-spectra should default to parquet with auto workers."""
+    from types import SimpleNamespace
+
+    runner = CliRunner()
+    catalog = tmp_path / "catalog.fits"
+    Table({'object_id': [1]}).write(catalog, format='fits', overwrite=True)
+
+    stats = SimpleNamespace(
+        requested_rows=1,
+        exported_rows=1,
+        skipped_rows=0,
+        failed_rows=0,
+        file_missing_rows=0,
+        output_files=[str(tmp_path / 'compiled_part001.parquet')],
+        manifest_path=str(tmp_path / 'compiled_manifest.json'),
+        failures_path='',
+    )
+
+    with patch('euclidkit.core.spectra_parquet.default_raw_parquet_workers', return_value=7):
+        with patch('euclidkit.core.spectra_parquet.spectra_to_parquet', return_value=stats) as mock_export:
+            result = runner.invoke(compile_spectra, [
+                '--spectra-table', str(catalog),
+                '--output-dir', str(tmp_path),
+                '--prefix', 'compiled',
+            ])
+
+    assert result.exit_code == 0
+    assert "Parquet export completed successfully!" in result.output
+    mock_export.assert_called_once()
+    kwargs = mock_export.call_args.kwargs
+    assert kwargs['catalog_table'] == str(catalog)
+    assert kwargs['output_prefix'] == str(tmp_path / 'compiled')
+    assert kwargs['chunk_size'] == 2000
+    assert kwargs['workers'] == 7
+    assert kwargs['lambda_range'] == 'RGS'
+    assert kwargs['on_error'] == 'fail'
+
+
+def test_compile_spectra_parquet_both_runs_two_arm_exports(tmp_path):
+    """Parquet -L BOTH should write separate RGS/BGS prefix families."""
+    from types import SimpleNamespace
+
+    runner = CliRunner()
+    catalog = tmp_path / "catalog.fits"
+    Table({'object_id': [1]}).write(catalog, format='fits', overwrite=True)
+    stats = SimpleNamespace(
+        requested_rows=1,
+        exported_rows=1,
+        skipped_rows=0,
+        failed_rows=0,
+        file_missing_rows=0,
+        output_files=[],
+        manifest_path=str(tmp_path / 'manifest.json'),
+        failures_path='',
+    )
+
+    with patch('euclidkit.core.spectra_parquet.spectra_to_parquet', return_value=stats) as mock_export:
+        result = runner.invoke(compile_spectra, [
+            '--spectra-table', str(catalog),
+            '--output-dir', str(tmp_path),
+            '--prefix', 'compiled',
+            '-L', 'BOTH',
+            '--workers', '3',
+            '--chunk-size', '10',
+            '--on-error', 'skip',
+        ])
+
+    assert result.exit_code == 0
+    assert "Parquet BOTH mode" in result.output
+    assert mock_export.call_count == 2
+    first = mock_export.call_args_list[0].kwargs
+    second = mock_export.call_args_list[1].kwargs
+    assert first['output_prefix'] == str(tmp_path / 'compiled_rgs')
+    assert second['output_prefix'] == str(tmp_path / 'compiled_bgs')
+    assert [first['lambda_range'], second['lambda_range']] == ['RGS', 'BGS']
+    assert first['workers'] == second['workers'] == 3
+    assert first['chunk_size'] == second['chunk_size'] == 10
+    assert first['on_error'] == second['on_error'] == 'skip'
+
+
+def test_dithers_to_parquet_main_cli_forwards_options(tmp_path):
+    """The main euclidkit CLI should expose dithers-to-parquet."""
+    from types import SimpleNamespace
+    from euclidkit.cli.main import main
+
+    runner = CliRunner()
+    catalog = tmp_path / "catalog.fits"
+    Table({'object_id': [1]}).write(catalog, format='fits', overwrite=True)
+    stats = SimpleNamespace(
+        objects_requested=1,
+        objects_exported=1,
+        skipped_rows=0,
+        failed_rows=0,
+        file_missing_rows=0,
+        combined_rows=0,
+        dither_rows=2,
+        combined_output_files=[],
+        dither_output_files=[str(tmp_path / 'raw_dithers_part001.parquet')],
+        manifest_path=str(tmp_path / 'raw_manifest.json'),
+        failures_path='',
+    )
+
+    with patch('euclidkit.core.spectra_parquet.dithers_to_parquet', return_value=stats) as mock_export:
+        result = runner.invoke(main, [
+            'dithers-to-parquet',
+            '--catalog-table', str(catalog),
+            '--output-prefix', str(tmp_path / 'raw'),
+            '--chunk-size', '11',
+            '--workers', '2',
+            '--lambda-range', 'RGS',
+            '--dithers-only',
+            '--overwrite',
+            '--on-error', 'skip',
+            '--no-progress',
+        ])
+
+    assert result.exit_code == 0
+    assert "Dither parquet export completed successfully!" in result.output
+    mock_export.assert_called_once()
+    kwargs = mock_export.call_args.kwargs
+    assert kwargs['catalog_table'] == str(catalog)
+    assert kwargs['output_prefix'] == str(tmp_path / 'raw')
+    assert kwargs['chunk_size'] == 11
+    assert kwargs['workers'] == 2
+    assert kwargs['lambda_range'] == 'RGS'
+    assert kwargs['include_combined'] is False
+    assert kwargs['overwrite'] is True
+    assert kwargs['on_error'] == 'skip'
+    assert kwargs['show_progress'] is False

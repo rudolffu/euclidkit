@@ -12,10 +12,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `--idr-deep-partition` for MER crossmatch and Cutana workflows.
 - Optional empty-column pruning for crossmatch outputs via
   `drop_empty_columns` and `euclidkit crossmatch --drop-empty-columns`.
+- Local Datalabs spectra Parquet export via `spectra_to_parquet`, the default
+  non-Datalink `euclidkit compile-spectra` path, and new
+  `euclidkit dithers-to-parquet` command.
 
 ### Changed
 - IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by
   default, with optional `deep_mode` or `both` partition selection.
+- Non-Datalink `compile-spectra` now defaults to Parquet output with automatic
+  multiprocessing; legacy local FITS output is available via
+  `--output-format fits`, and Datalink remains FITS-only.
 
 ## [0.2.0] - 2026-03-02
 

@@ -58,25 +58,24 @@ The same ``idr_deep_partition`` argument is available on
 metadata. It applies only to MER catalogue selection, not spectra-source or
 SPE redshift candidate table selection.
 
-SpectrumCompiler
-~~~~~~~~~~~~~~~~
+Spectra Parquet Export
+~~~~~~~~~~~~~~~~~~~~~~
 
-Compiles queried spectra into chunked FITS products and metadata tables.
+The default local Datalabs spectra workflow writes raw Parquet parts directly
+from catalog rows with ``datalabs_path``, ``file_name``, and ``hdu_index``.
 
 .. code-block:: python
 
-   from euclidkit.core.spectra import SpectrumCompiler
+   from euclidkit.core.spectra_parquet import spectra_to_parquet
 
-   compiler = SpectrumCompiler(max_extensions=1000)
-   output_files = compiler.compile_spectra(
-       spectra_table=spectra_table,
-       output_dir="./output",
-       output_prefix="compiled_spectra",
-       workers=1,
+   stats = spectra_to_parquet(
+       catalog_table="spectra_sources.fits",
+       output_prefix="./output/raw_spectra",
+       chunk_size=2000,
+       workers=8,
+       lambda_range="RGS",
    )
 
-   metadata_file = compiler.create_metadata_table(
-       spectra_table=spectra_table,
-       output_files=output_files,
-       output_dir="./output",
-   )
+Use ``dithers_to_parquet`` from the same module to export combined and per-dither
+SIR spectra. ``SpectrumCompiler`` remains available for legacy multi-extension
+FITS compilation and Datalink FITS outputs.

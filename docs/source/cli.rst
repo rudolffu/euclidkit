@@ -161,28 +161,30 @@ IDR DEEP example:
 compile-spectra
 ---------------
 
-Compile spectra into chunked multi-extension FITS outputs.
+Export local Datalabs spectra to raw Parquet parts by default. Use
+``--output-format fits`` for the legacy local FITS compiler, or
+``--use-datalink`` for the unchanged Datalink FITS workflow.
 
-Example:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_spectra
-
-IDR DEEP arm-selection example:
+Default Parquet example:
 
 .. code-block:: bash
 
    euclidkit compile-spectra \
      --spectra-table spectra_sources.fits \
      --output-dir ./output \
-     --prefix compiled_deep \
-     --environment IDR \
-     --idr-field DEEP \
-     --lambda-range BOTH
+     --prefix raw_spectra \
+     --chunk-size 2000 \
+     -L RGS
+
+Legacy FITS example:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_spectra \
+     --output-format fits
 
 Datalink dual-arm example:
 
@@ -196,6 +198,19 @@ Datalink dual-arm example:
      --environment IDR \
      --schema sedm \
      -L BOTH
+
+dithers-to-parquet
+------------------
+
+Export local Datalabs combined and per-dither SIR spectra to Parquet parts.
+
+.. code-block:: bash
+
+   euclidkit dithers-to-parquet \
+     --catalog-table spectra_sources.fits \
+     --output-prefix ./output/raw_sir \
+     --lambda-range RGS \
+     --workers 8
 
 upload-table
 ------------

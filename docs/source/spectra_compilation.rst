@@ -1,12 +1,57 @@
 Spectra Compilation
 ===================
 
-Canonical mode (local FITS paths on Datalabs)
----------------------------------------------
+Default Parquet mode (local Datalabs FITS paths)
+------------------------------------------------
 
-Canonical compilation reads source FITS files from ``datalabs_path`` + ``file_name``
-columns and copies selected ``hdu_index`` rows into chunked outputs. This requires 
-access to the Datalabs volumes.
+``compile-spectra`` reads catalog rows with ``datalabs_path``, ``file_name``,
+``hdu_index``, ``source_id``, ``object_id``, ``ra_obj``, and ``dec_obj``. By
+default it reads the requested FITS HDU directly and writes raw spectra Parquet
+parts.
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix raw_spectra \
+     --chunk-size 2000 \
+     --workers 8 \
+     -L RGS
+
+This writes:
+
+- ``raw_spectra_part001.parquet``, ...
+- ``raw_spectra_manifest.json``
+- ``raw_spectra_failures.jsonl`` only when ``--on-error skip`` records failures
+
+Parquet rows include ``object_id``, ``source_id``, ``ra``, ``dec``, raw array
+columns from the FITS HDU, ``wavelength``, and ``flux`` as a ``signal`` alias.
+Derived ``err``, ``valid``, and ``ivar`` columns are intentionally not written.
+
+Arm selection
+-------------
+
+In Parquet mode, ``-L/--lambda-range`` filters using the FITS primary ``LRANGE``
+header. ``-L BOTH`` runs separate RGS and BGS exports:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix raw_spectra \
+     -L BOTH
+
+This writes separate ``raw_spectra_rgs_*`` and ``raw_spectra_bgs_*`` Parquet
+families. XML LambdaRange annotation is not used in Parquet mode.
+
+Legacy local FITS mode
+----------------------
+
+Use ``--output-format fits`` to keep the previous multi-extension FITS compiler.
+This path still supports IDR DEEP XML LambdaRange annotation and FITS metadata
+output.
 
 .. code-block:: bash
 
@@ -14,55 +59,18 @@ access to the Datalabs volumes.
      --spectra-table spectra_sources.fits \
      --output-dir ./output \
      --prefix compiled_spectra \
+     --output-format fits \
      --max-extensions 1000
 
-For IDR DEEP canonical tables containing both BGS and RGS rows, select the arm
-with ``-L/--lambda-range``. In ``BOTH`` mode, euclidkit writes separate outputs
-with ``_rgs`` and ``_bgs`` suffixes.
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_deep \
-     --environment IDR \
-     --idr-field DEEP \
-     -L BOTH
-
-Resume behavior
----------------
-
-Resume is the default when output directory already has chunk files and
-``--overwrite`` is not provided.
-
-During resume, euclidkit:
-
-1. Inspects existing contiguous chunk files.
-2. Counts compiled spectra from actual extension counts.
-3. Skips already compiled input rows.
-4. Continues with remaining rows, even if previous runs used a different chunk size.
-
-Parallel workers (not recommended on Datalabs)
-----------------------------------------------
-
-Use ``--workers`` for chunk-level parallelism in canonical mode:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --workers 2
-
-On shared Datalabs storage, ``--workers 2`` is often not faster due to I/O
-contention. Benchmark on your setup; ``--workers 1`` is usually the safest default.
+Resume behavior applies to this FITS compatibility mode when output chunk files
+already exist and ``--overwrite`` is not provided.
 
 Datalink mode
 -------------
 
 Use ``--use-datalink`` to retrieve spectra by source ID instead of local
-``datalabs_path`` file access.
+``datalabs_path`` file access. Datalink remains FITS-only and ignores the local
+``--output-format`` default.
 
 .. code-block:: bash
 
@@ -79,13 +87,36 @@ In datalink ``-L BOTH`` mode, euclidkit writes separate outputs:
 - ``<prefix>_rgs_chunk_###.fits``
 - ``<prefix>_bgs_chunk_###.fits``
 
-Notes:
+Dithers Parquet Export
+----------------------
 
-- ``--workers`` currently applies to canonical mode only.
-- For quick tests, use ``--limit N``.
-- ``-L/--lambda-range`` is the unified arm selector for both canonical and
-  datalink modes.
-- In datalink mode, ``-L RGS`` maps to ``SPECTRA_RGS`` and ``-L BGS`` maps to
-  ``SPECTRA_BGS``. ``-L BOTH`` runs both arms and writes separate files.
-- ``--retrieval-type`` is kept for backward compatibility; if it conflicts with
-  ``-L/--lambda-range``, ``-L`` takes precedence.
+``dithers-to-parquet`` exports the combined spectrum and matching
+``*_DITH1D_*_SIGNAL`` spectra for each catalog object. It is local-Datalabs only
+by data access model: it reads catalog ``datalabs_path`` + ``file_name`` entries
+and does not use Datalink.
+
+.. code-block:: bash
+
+   euclidkit dithers-to-parquet \
+     --catalog-table spectra_sources.fits \
+     --output-prefix ./output/raw_sir \
+     --chunk-size 2000 \
+     --workers 8 \
+     --lambda-range RGS
+
+This writes:
+
+- ``raw_sir_combined_part001.parquet``, ...
+- ``raw_sir_dithers_part001.parquet``, ...
+- ``raw_sir_manifest.json``
+
+Use ``--dithers-only`` when combined spectra were already exported with
+``compile-spectra`` Parquet mode.
+
+Notes
+-----
+
+- Parquet workers default to ``min(os.cpu_count(), 8)``.
+- FITS compatibility and Datalink modes default to one worker.
+- Use ``--limit N`` with ``compile-spectra`` for quick Parquet or FITS tests.
+- Use ``--on-error skip`` to continue past unreadable rows and write a failures JSONL.

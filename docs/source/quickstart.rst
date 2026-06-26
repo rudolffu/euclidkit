@@ -35,15 +35,16 @@ Query spectra for crossmatched objects:
      --crossmatch crossmatch_results.fits \
      --output spectra_sources.fits
 
-Compile spectra into chunked FITS (on Datalabs):
+Export local Datalabs spectra to raw Parquet parts:
 
 .. code-block:: bash
 
    euclidkit compile-spectra \
      --spectra-table spectra_sources.fits \
      --output-dir ./output \
-     --prefix compiled_spectra \
-     --max-extensions 1000
+     --prefix raw_spectra \
+     --chunk-size 2000 \
+     -L RGS
 
 Compile both Euclid arms via datalink (RGS + BGS):
 

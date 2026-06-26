@@ -35,6 +35,7 @@ dependencies = [
     "mocpy>=0.13.0",
     "astroquery>=0.4.0",
     "pandas>=1.2.0",
+    "pyarrow>=8.0.0",
     "photutils>=1.0.0",
     "sep>=1.2.0",
     "scikit-image>=0.18.0",

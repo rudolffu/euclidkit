@@ -759,6 +759,7 @@ class TestCompileSpectraCLI:
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                            '--output-format', 'fits',
                             '--prefix', 'test_compiled'
                         ])
                     
@@ -790,6 +791,7 @@ class TestCompileSpectraCLI:
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                            '--output-format', 'fits',
                             '--prefix', 'custom_prefix',
                             '--max-extensions', '1000',
                             '--overwrite',
@@ -832,7 +834,8 @@ class TestCompileSpectraCLI:
                     with patch('euclidkit.utils.io.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
-                            '--output-dir', output_dir
+                            '--output-dir', output_dir,
+                            '--output-format', 'fits'
                         ])
                     
                     assert result.exit_code == 0
@@ -858,7 +861,8 @@ class TestCompileSpectraCLI:
                     with patch('euclidkit.utils.io.load_table', return_value=self.spectra_table):
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
-                            '--output-dir', output_dir
+                            '--output-dir', output_dir,
+                            '--output-format', 'fits'
                         ])
                     
                     assert result.exit_code == 1
@@ -883,6 +887,7 @@ class TestCompileSpectraCLI:
                         result = self.runner.invoke(compile_spectra, [
                             '--spectra-table', spectra_file,
                             '--output-dir', output_dir,
+                            '--output-format', 'fits',
                             '--verbose'
                         ])
                     

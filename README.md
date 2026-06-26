@@ -233,24 +233,31 @@ euclidkit query-cutana \
 ### Compiling Spectra
 
 ```bash
-# Compile individual spectra into chunked FITS files
+# Default local Datalabs mode: export raw spectra to parquet parts
+euclidkit compile-spectra \
+    --spectra-table spectra_sources.fits \
+    --output-dir ./output \
+    --prefix raw_spectra \
+    --chunk-size 2000 \
+    --workers 8 \
+    -L RGS
+
+# Export both arms into separate raw_spectra_rgs / raw_spectra_bgs parquet families
+euclidkit compile-spectra \
+    --spectra-table spectra_sources.fits \
+    --output-dir ./output \
+    --prefix raw_spectra \
+    -L BOTH
+
+# Legacy local FITS mode remains available explicitly
 euclidkit compile-spectra \
     --spectra-table spectra_sources.fits \
     --output-dir ./output \
     --prefix compiled_spectra \
-    --max-extensions 1000 \
-    --verbose
+    --output-format fits \
+    --max-extensions 1000
 
-# IDR DEEP canonical mode: choose arm(s) using XML LambdaRange
-euclidkit compile-spectra \
-    --spectra-table spectra_sources.fits \
-    --output-dir ./output \
-    --prefix compiled_deep \
-    --environment IDR \
-    --idr-field DEEP \
-    -L BOTH
-
-# Datalink mode: compile BOTH arms into separate _rgs / _bgs outputs
+# Datalink mode is unchanged and writes FITS outputs
 euclidkit compile-spectra \
     --spectra-table spectra_sources.fits \
     --output-dir ./output \
@@ -259,10 +266,16 @@ euclidkit compile-spectra \
     --environment IDR \
     --schema sedm \
     -L BOTH
+
+# Export per-dither spectra from local Datalabs FITS files
+euclidkit dithers-to-parquet \
+    --catalog-table spectra_sources.fits \
+    --output-prefix ./output/raw_sir \
+    --workers 8 \
+    --lambda-range RGS
 ```
 
-Note: for canonical compilation from local Datalabs FITS volumes, `--workers 2` is often not faster due to shared-storage I/O contention. Prefer `--workers 1` unless benchmarking on your setup shows a clear gain.
-Note: `-L/--lambda-range` is the unified arm selector. In datalink mode, `RGS`/`BGS` map to corresponding retrieval types, and `BOTH` runs two passes and writes separate `_rgs` and `_bgs` files. `--retrieval-type` is kept for backward compatibility.
+Note: non-Datalink `compile-spectra` now defaults to Parquet and reads `LRANGE` from FITS headers for `-L/--lambda-range` filtering. Datalink remains FITS-only; `RGS`/`BGS` map to corresponding retrieval types, and `BOTH` runs two passes and writes separate `_rgs` and `_bgs` FITS files. `--retrieval-type` is kept for backward compatibility.
 
 ## Key Features
 
@@ -275,8 +288,8 @@ Note: `-L/--lambda-range` is the unified arm selector. In datalink mode, `RGS`/`
 ### Spectroscopic Tools
 
 - **Spectrum Access**: Direct access to Euclid data volumes on ESA Datalabs
-- **FITS Compilation**: Combine individual spectra into multi-extension FITS files
-- **Metadata Preservation**: Maintain source IDs, coordinates, and provenance information
+- **Parquet Spectra Export**: Export local Datalabs spectra to raw Parquet parts by default
+- **FITS Compatibility**: Keep legacy multi-extension FITS compilation and Datalink FITS outputs available
 
 ### Analysis Pipeline
 
@@ -517,7 +530,7 @@ This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICE
 - **Spectroscopic Pipeline**: Complete pipeline for accessing and combining Euclid spectra
 - **CLI Integration**: Added `--combine-output` option to `query-spectra` command
 - **TAP Upload**: Improved query performance using TAP table uploads
-- **FITS Compilation**: Efficient multi-extension FITS file creation
+- **Parquet Spectra Export**: Default local Datalabs spectra export to Parquet
 - **Error Handling**: Robust handling of long filenames and missing data
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.

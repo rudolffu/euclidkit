@@ -562,20 +562,25 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
 @click.option('--spectra-table', '-s', required=True, type=click.Path(exists=True),
               help='Spectral sources table from query-spectra command')
 @click.option('--output-dir', '-o', required=True, type=click.Path(),
-              help='Output directory for compiled FITS files')
+              help='Output directory for compiled spectra')
 @click.option('--prefix', type=str, default='compiled_spectra',
               help='Prefix for output files (default: compiled_spectra)')
+@click.option('--output-format', type=click.Choice(['parquet', 'fits']), default='parquet',
+              show_default=True,
+              help='Output format for local Datalabs mode; ignored with --use-datalink')
 @click.option('--max-extensions', type=int, default=1000,
-              help='Maximum extensions per file (default: 1000)')
+              help='Maximum extensions per FITS file (FITS and Datalink modes only)')
+@click.option('--chunk-size', type=int, default=2000, show_default=True,
+              help='Rows per parquet part (parquet mode only)')
 @click.option('--overwrite', is_flag=True,
-              help='Overwrite existing output files')
+              help='Overwrite existing output files for the selected prefix')
 @click.option('--use-datalink', is_flag=True,
               help='Retrieve spectra via Euclid datalink instead of local datalabs_path/file_name')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
-              default='PDR', help='Archive environment for datalink mode (default: PDR)')
+              default='PDR', help='Archive environment for datalink/FITS compatibility mode')
 @click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
-              help='IDR field selection (used by canonical mode to resolve DEEP BGS/RGS XMLs)')
+              help='IDR field selection (used by FITS mode to resolve DEEP BGS/RGS XMLs)')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path for datalink mode')
 @click.option('--retrieval-type', type=click.Choice(['ALL', 'SPECTRA_BGS', 'SPECTRA_RGS']),
@@ -585,89 +590,85 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Datalink schema value (used with --use-datalink)')
 @click.option('--limit', type=int, default=None,
               help='Process only the first N rows from spectra table (useful for quick tests)')
-@click.option('--workers', type=int, default=1, show_default=True,
-              help='Number of chunk workers (canonical compile only)')
+@click.option('--workers', type=int, default=None,
+              help='Worker count: parquet defaults to min(os.cpu_count(), 8); FITS/Datalink default to 1')
 @click.option('--lambda-range', '-L', type=click.Choice(['RGS', 'BGS', 'BOTH']),
               default='RGS', show_default=True,
-              help='Canonical mode spectral arm selection (RGS/BGS/BOTH)')
+              help='Spectral arm selection (RGS/BGS/BOTH)')
+@click.option('--on-error', type=click.Choice(['fail', 'skip']), default='fail', show_default=True,
+              help='Fail on bad parquet rows or skip them and write a failures JSONL')
+@click.option('--progress', 'progress', is_flag=True, default=None,
+              help='Show parquet export progress')
+@click.option('--no-progress', 'progress', flag_value=False,
+              help='Disable parquet export progress')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
 def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, prefix: str,
-                   max_extensions: int, overwrite: bool, use_datalink: bool,
-                   environment: str, idr_field: str, credentials: Optional[str], retrieval_type: str,
-                   schema: str, limit: Optional[int], workers: int, lambda_range: str, verbose: bool):
+                   output_format: str, max_extensions: int, chunk_size: int, overwrite: bool,
+                   use_datalink: bool, environment: str, idr_field: str,
+                   credentials: Optional[str], retrieval_type: str, schema: str,
+                   limit: Optional[int], workers: Optional[int], lambda_range: str,
+                   on_error: str, progress: Optional[bool], verbose: bool):
     """
-    Compile individual spectra into chunked multi-extension FITS files.
-    
-    This command takes the output from query-spectra and creates compiled
-    FITS files with multiple spectrum extensions, following the pattern
-    from your notebook example.
+    Compile local Datalabs spectra to parquet by default, or FITS via compatibility modes.
+
+    Non-Datalink mode defaults to raw parquet parts read directly from
+    datalabs_path/file_name/hdu_index catalog rows. Use --output-format fits for
+    the legacy multi-extension FITS compiler. --use-datalink remains FITS-only.
     """
     import logging
     from euclidkit.core.spectra import SpectrumCompiler
     from euclidkit.utils.io import load_table
     from euclidkit.core.data_access import EuclidArchive
+    from euclidkit.core.spectra_parquet import default_raw_parquet_workers, spectra_to_parquet
 
     if verbose:
         logging.basicConfig(level=logging.INFO)
-    
+
     archive = None
     try:
         target_output_dir = Path(output_dir)
-        if target_output_dir.exists() and target_output_dir.is_dir():
-            has_existing_content = any(target_output_dir.iterdir())
-            if has_existing_content and overwrite:
-                confirmed = click.confirm(
-                    f"Output directory '{target_output_dir}' is not empty. Overwrite existing files?",
-                    default=False
-                )
-                if not confirmed:
-                    overwrite = False
-            elif has_existing_content and not overwrite:
-                click.echo(
-                    f"Output directory '{target_output_dir}' is not empty. "
-                    "Resume mode: existing chunk files will be kept."
-                )
-        elif target_output_dir.exists() and target_output_dir.is_file():
+        if target_output_dir.exists() and target_output_dir.is_file():
             raise ValueError(f"Output path '{target_output_dir}' is a file; please provide a directory path.")
-
+        target_output_dir.mkdir(parents=True, exist_ok=True)
         output_dir = str(target_output_dir)
 
-        # Load spectral sources table
-        sources = load_table(spectra_table)
-        if limit is not None:
-            if limit <= 0:
-                raise ValueError("--limit must be a positive integer")
-            sources = sources[:limit]
-        if verbose:
-            click.echo(f"Loaded {len(sources)} spectral sources from {spectra_table}")
-        
-        # Initialize compiler
-        compiler = SpectrumCompiler(max_extensions=max_extensions)
-        
-        if verbose:
-            click.echo(f"Max extensions per file: {max_extensions}")
-            click.echo(f"Output directory: {output_dir}")
-            if not use_datalink:
-                click.echo(f"Chunk workers: {workers}")
-                click.echo(f"LambdaRange selection: {lambda_range}")
-                if environment == 'IDR':
-                    click.echo(f"IDR field: {idr_field.upper()}")
-        
-        # Compile spectra
+        if limit is not None and limit <= 0:
+            raise ValueError("--limit must be a positive integer")
+
+        selected_lambda = lambda_range.upper()
+        fits_workers = workers if workers is not None else 1
+        parquet_workers = workers if workers is not None else default_raw_parquet_workers()
+        show_progress = bool(progress) if progress is not None else False
+
+        # Datalink is intentionally kept on the existing FITS implementation.
         if use_datalink:
+            if output_format != 'fits':
+                click.echo("Note: --use-datalink is FITS-only; ignoring --output-format parquet.")
+            sources = load_table(spectra_table)
+            if limit is not None:
+                sources = sources[:limit]
+            compiler = SpectrumCompiler(max_extensions=max_extensions)
+            if verbose:
+                click.echo(f"Loaded {len(sources)} spectral sources from {spectra_table}")
+                click.echo(f"Max extensions per file: {max_extensions}")
+                click.echo(f"Output directory: {output_dir}")
+
             if idr_field.upper() != 'WIDE':
                 click.echo(
                     "Note: --idr-field is ignored in --use-datalink mode "
                     "(datalink selection depends on --retrieval-type and --schema)."
                 )
+            if workers is not None and workers != 1:
+                click.echo("Note: --workers is currently applied to local modes only; datalink runs with one worker.")
+
             lambda_to_retrieval = {
                 'RGS': 'SPECTRA_RGS',
                 'BGS': 'SPECTRA_BGS',
                 'BOTH': 'ALL',
             }
             retrieval_to_lambda = {v: k for k, v in lambda_to_retrieval.items()}
-            lambda_selected = lambda_range.upper()
+            lambda_selected = selected_lambda
             retrieval_selected = retrieval_type.upper()
 
             lambda_src = ctx.get_parameter_source('lambda_range')
@@ -692,10 +693,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                 f"Datalink arm selection: lambda_range={lambda_selected}, "
                 f"retrieval_type={retrieval_selected}"
             )
-            source_id_col = compiler._resolve_source_id_column(
-                sources,
-                preferred='source_id',
-            )
+            source_id_col = compiler._resolve_source_id_column(sources, preferred='source_id')
             dedup_sources, dedup_stats = compiler.deduplicate_by_source_id(
                 spectra_table=sources,
                 source_id_col=source_id_col,
@@ -707,8 +705,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                     f"(removed {dedup_stats['duplicate_rows_removed']} duplicates)"
                 )
             sources_for_datalink = dedup_sources
-            if workers != 1:
-                click.echo("Note: --workers is currently applied to canonical compile only; datalink runs with one worker.")
+
             archive = EuclidArchive(environment=environment)
             if credentials:
                 archive.login(credentials_file=credentials)
@@ -777,132 +774,215 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                 )
                 metadata_files = [metadata_file]
                 total_processed = len(sources_for_datalink)
-        else:
-            selected_lambda = lambda_range.upper()
-            is_idr_deep = environment == 'IDR' and idr_field.upper() == 'DEEP'
 
-            if not is_idr_deep and selected_lambda in {'BGS', 'BOTH'}:
-                click.echo(
-                    f"Warning: {environment} {idr_field.upper()} only provides RGS in canonical mode; "
-                    f"falling back to RGS (requested {selected_lambda})."
-                )
-                selected_lambda = 'RGS'
+            click.echo("Compilation completed successfully!")
+            click.echo(f"Created {len(output_files)} FITS files:")
+            for i, file_path in enumerate(output_files, 1):
+                click.echo(f"  {i:2d}. {Path(file_path).name}")
+            if len(metadata_files) == 1:
+                click.echo(f"Metadata saved to: {Path(metadata_files[0]).name}")
+            else:
+                click.echo("Metadata files:")
+                for i, meta_path in enumerate(metadata_files, 1):
+                    click.echo(f"  {i:2d}. {Path(meta_path).name}")
+            click.echo(f"Total spectra processed: {total_processed}")
+            return
 
-            metadata_files = []
-            if is_idr_deep:
-                sources, xml_stats = compiler.annotate_lambda_range_from_xml(
-                    spectra_table=sources,
-                    datalabs_path_col='datalabs_path',
-                    file_name_col='file_name',
-                    lambda_col='lambda_range',
-                )
-                click.echo(
-                    "LambdaRange XML summary: "
-                    f"total={xml_stats['total']}, resolved={xml_stats['resolved']}, "
-                    f"RGS={xml_stats['rgs']}, BGS={xml_stats['bgs']}, "
-                    f"unresolved={xml_stats['unresolved']}, ambiguous={xml_stats['ambiguous']}"
-                )
+        if output_format == 'parquet':
+            if verbose:
+                click.echo(f"Output directory: {output_dir}")
+                click.echo(f"Output format: parquet")
+                click.echo(f"Parquet workers: {parquet_workers}")
+                click.echo(f"Parquet chunk size: {chunk_size}")
+                click.echo(f"LambdaRange selection: {selected_lambda}")
 
-                if selected_lambda == 'BOTH':
-                    rgs_table, rgs_stats = compiler.filter_table_by_lambda_range(sources, lambda_range='RGS')
-                    bgs_table, bgs_stats = compiler.filter_table_by_lambda_range(sources, lambda_range='BGS')
-                    click.echo(
-                        "LambdaRange selection summary (BOTH): "
-                        f"RGS selected={rgs_stats['selected']}, BGS selected={bgs_stats['selected']}, "
-                        f"unresolved={rgs_stats['unresolved']}, ambiguous={rgs_stats['ambiguous']}"
-                    )
-
-                    output_files = []
-                    total_processed = 0
-
-                    if len(rgs_table) > 0:
-                        rgs_prefix = f"{prefix}_rgs"
-                        rgs_files = compiler.compile_spectra(
-                            spectra_table=rgs_table,
-                            output_dir=output_dir,
-                            output_prefix=rgs_prefix,
-                            overwrite=overwrite,
-                            workers=workers,
-                        )
-                        output_files.extend(rgs_files)
-                        metadata_files.append(
-                            compiler.create_metadata_table(
-                                spectra_table=rgs_table,
-                                output_files=rgs_files,
-                                output_dir=output_dir,
-                                output_name=f"{rgs_prefix}_metadata.fits",
-                            )
-                        )
-                        total_processed += len(rgs_table)
-                    if len(bgs_table) > 0:
-                        bgs_prefix = f"{prefix}_bgs"
-                        bgs_files = compiler.compile_spectra(
-                            spectra_table=bgs_table,
-                            output_dir=output_dir,
-                            output_prefix=bgs_prefix,
-                            overwrite=overwrite,
-                            workers=workers,
-                        )
-                        output_files.extend(bgs_files)
-                        metadata_files.append(
-                            compiler.create_metadata_table(
-                                spectra_table=bgs_table,
-                                output_files=bgs_files,
-                                output_dir=output_dir,
-                                output_name=f"{bgs_prefix}_metadata.fits",
-                            )
-                        )
-                        total_processed += len(bgs_table)
-                else:
-                    selected_sources, sel_stats = compiler.filter_table_by_lambda_range(
-                        sources, lambda_range=selected_lambda
-                    )
-                    click.echo(
-                        "LambdaRange selection summary: "
-                        f"selected={sel_stats['selected']}, skipped_other_band={sel_stats['skipped_other_band']}, "
-                        f"unresolved={sel_stats['unresolved']}, ambiguous={sel_stats['ambiguous']}"
-                    )
-                    output_files = compiler.compile_spectra(
-                        spectra_table=selected_sources,
-                        output_dir=output_dir,
-                        output_prefix=prefix,
+            if selected_lambda == 'BOTH':
+                click.echo("Parquet BOTH mode: writing separate RGS and BGS parquet outputs.")
+                stats_by_arm = []
+                for arm in ('RGS', 'BGS'):
+                    arm_prefix = str(target_output_dir / f"{prefix}_{arm.lower()}")
+                    stats_by_arm.append((arm, spectra_to_parquet(
+                        catalog_table=spectra_table,
+                        output_prefix=arm_prefix,
+                        chunk_size=chunk_size,
+                        workers=parquet_workers,
+                        lambda_range=arm,
                         overwrite=overwrite,
-                        workers=workers,
+                        on_error=on_error,
+                        show_progress=show_progress,
+                        limit=limit,
+                    )))
+                total_exported = sum(stats.exported_rows for _, stats in stats_by_arm)
+                total_requested = sum(stats.requested_rows for _, stats in stats_by_arm)
+                click.echo("Parquet export completed successfully!")
+                for arm, stats in stats_by_arm:
+                    _echo_raw_parquet_stats(stats, label=f"{arm} parquet")
+                click.echo(f"Total spectra exported: {total_exported}")
+                click.echo(f"Total rows scanned: {total_requested}")
+            else:
+                stats = spectra_to_parquet(
+                    catalog_table=spectra_table,
+                    output_prefix=str(target_output_dir / prefix),
+                    chunk_size=chunk_size,
+                    workers=parquet_workers,
+                    lambda_range=selected_lambda,
+                    overwrite=overwrite,
+                    on_error=on_error,
+                    show_progress=show_progress,
+                    limit=limit,
+                )
+                click.echo("Parquet export completed successfully!")
+                _echo_raw_parquet_stats(stats, label="parquet")
+                click.echo(f"Total spectra exported: {stats.exported_rows}")
+            return
+
+        # Legacy local FITS compatibility mode.
+        sources = load_table(spectra_table)
+        if limit is not None:
+            sources = sources[:limit]
+        compiler = SpectrumCompiler(max_extensions=max_extensions)
+        if verbose:
+            click.echo(f"Loaded {len(sources)} spectral sources from {spectra_table}")
+            click.echo(f"Max extensions per file: {max_extensions}")
+            click.echo(f"Output directory: {output_dir}")
+            click.echo("Output format: fits")
+            click.echo(f"Chunk workers: {fits_workers}")
+            click.echo(f"LambdaRange selection: {selected_lambda}")
+            if environment == 'IDR':
+                click.echo(f"IDR field: {idr_field.upper()}")
+
+        if target_output_dir.exists() and any(target_output_dir.iterdir()) and not overwrite:
+            click.echo(
+                f"Output directory '{target_output_dir}' is not empty. "
+                "Resume mode: existing chunk files will be kept."
+            )
+        elif target_output_dir.exists() and any(target_output_dir.iterdir()) and overwrite:
+            confirmed = click.confirm(
+                f"Output directory '{target_output_dir}' is not empty. Overwrite existing files?",
+                default=False,
+            )
+            if not confirmed:
+                overwrite = False
+
+        is_idr_deep = environment == 'IDR' and idr_field.upper() == 'DEEP'
+        if not is_idr_deep and selected_lambda in {'BGS', 'BOTH'}:
+            click.echo(
+                f"Warning: {environment} {idr_field.upper()} only provides RGS in FITS mode; "
+                f"falling back to RGS (requested {selected_lambda})."
+            )
+            selected_lambda = 'RGS'
+
+        metadata_files = []
+        if is_idr_deep:
+            sources, xml_stats = compiler.annotate_lambda_range_from_xml(
+                spectra_table=sources,
+                datalabs_path_col='datalabs_path',
+                file_name_col='file_name',
+                lambda_col='lambda_range',
+            )
+            click.echo(
+                "LambdaRange XML summary: "
+                f"total={xml_stats['total']}, resolved={xml_stats['resolved']}, "
+                f"RGS={xml_stats['rgs']}, BGS={xml_stats['bgs']}, "
+                f"unresolved={xml_stats['unresolved']}, ambiguous={xml_stats['ambiguous']}"
+            )
+
+            if selected_lambda == 'BOTH':
+                rgs_table, rgs_stats = compiler.filter_table_by_lambda_range(sources, lambda_range='RGS')
+                bgs_table, bgs_stats = compiler.filter_table_by_lambda_range(sources, lambda_range='BGS')
+                click.echo(
+                    "LambdaRange selection summary (BOTH): "
+                    f"RGS selected={rgs_stats['selected']}, BGS selected={bgs_stats['selected']}, "
+                    f"unresolved={rgs_stats['unresolved']}, ambiguous={rgs_stats['ambiguous']}"
+                )
+
+                output_files = []
+                total_processed = 0
+                if len(rgs_table) > 0:
+                    rgs_prefix = f"{prefix}_rgs"
+                    rgs_files = compiler.compile_spectra(
+                        spectra_table=rgs_table,
+                        output_dir=output_dir,
+                        output_prefix=rgs_prefix,
+                        overwrite=overwrite,
+                        workers=fits_workers,
                     )
+                    output_files.extend(rgs_files)
                     metadata_files.append(
                         compiler.create_metadata_table(
-                            spectra_table=selected_sources,
-                            output_files=output_files,
+                            spectra_table=rgs_table,
+                            output_files=rgs_files,
                             output_dir=output_dir,
-                            output_name=f"{prefix}_metadata.fits"
+                            output_name=f"{rgs_prefix}_metadata.fits",
                         )
                     )
-                    total_processed = len(selected_sources)
+                    total_processed += len(rgs_table)
+                if len(bgs_table) > 0:
+                    bgs_prefix = f"{prefix}_bgs"
+                    bgs_files = compiler.compile_spectra(
+                        spectra_table=bgs_table,
+                        output_dir=output_dir,
+                        output_prefix=bgs_prefix,
+                        overwrite=overwrite,
+                        workers=fits_workers,
+                    )
+                    output_files.extend(bgs_files)
+                    metadata_files.append(
+                        compiler.create_metadata_table(
+                            spectra_table=bgs_table,
+                            output_files=bgs_files,
+                            output_dir=output_dir,
+                            output_name=f"{bgs_prefix}_metadata.fits",
+                        )
+                    )
+                    total_processed += len(bgs_table)
             else:
+                selected_sources, sel_stats = compiler.filter_table_by_lambda_range(
+                    sources, lambda_range=selected_lambda
+                )
+                click.echo(
+                    "LambdaRange selection summary: "
+                    f"selected={sel_stats['selected']}, skipped_other_band={sel_stats['skipped_other_band']}, "
+                    f"unresolved={sel_stats['unresolved']}, ambiguous={sel_stats['ambiguous']}"
+                )
                 output_files = compiler.compile_spectra(
-                    spectra_table=sources,
+                    spectra_table=selected_sources,
                     output_dir=output_dir,
                     output_prefix=prefix,
                     overwrite=overwrite,
-                    workers=workers,
+                    workers=fits_workers,
                 )
                 metadata_files.append(
                     compiler.create_metadata_table(
-                        spectra_table=sources,
+                        spectra_table=selected_sources,
                         output_files=output_files,
                         output_dir=output_dir,
                         output_name=f"{prefix}_metadata.fits"
                     )
                 )
-                total_processed = len(sources)
-        
-        # Report results
-        click.echo(f"Compilation completed successfully!")
+                total_processed = len(selected_sources)
+        else:
+            output_files = compiler.compile_spectra(
+                spectra_table=sources,
+                output_dir=output_dir,
+                output_prefix=prefix,
+                overwrite=overwrite,
+                workers=fits_workers,
+            )
+            metadata_files.append(
+                compiler.create_metadata_table(
+                    spectra_table=sources,
+                    output_files=output_files,
+                    output_dir=output_dir,
+                    output_name=f"{prefix}_metadata.fits"
+                )
+            )
+            total_processed = len(sources)
+
+        click.echo("Compilation completed successfully!")
         click.echo(f"Created {len(output_files)} FITS files:")
         for i, file_path in enumerate(output_files, 1):
-            file_name = Path(file_path).name
-            click.echo(f"  {i:2d}. {file_name}")
-        
+            click.echo(f"  {i:2d}. {Path(file_path).name}")
         if len(metadata_files) == 1:
             click.echo(f"Metadata saved to: {Path(metadata_files[0]).name}")
         else:
@@ -910,13 +990,90 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
             for i, meta_path in enumerate(metadata_files, 1):
                 click.echo(f"  {i:2d}. {Path(meta_path).name}")
         click.echo(f"Total spectra processed: {total_processed}")
-        
+
     except Exception as e:
         click.echo(f"Error compiling spectra: {e}", err=True)
         sys.exit(1)
     finally:
         if archive is not None:
             archive.logout()
+
+
+def _echo_raw_parquet_stats(stats, *, label: str) -> None:
+    click.echo(
+        f"{label}: requested_rows={stats.requested_rows} exported_rows={stats.exported_rows} "
+        f"skipped_rows={stats.skipped_rows} failed_rows={stats.failed_rows} "
+        f"file_missing_rows={getattr(stats, 'file_missing_rows', 0)} "
+        f"parts={len(stats.output_files)} manifest={stats.manifest_path}"
+    )
+    if stats.failures_path:
+        click.echo(f"failures={stats.failures_path}")
+
+
+@click.command(name='dithers-to-parquet')
+@click.option('--catalog-table', required=True, type=click.Path(exists=True),
+              help='Catalog table with datalabs_path, file_name, and hdu_index')
+@click.option('--output-prefix', required=True, type=click.Path(),
+              help='Output prefix for combined/dither parquet parts')
+@click.option('--chunk-size', type=int, default=2000, show_default=True,
+              help='Catalog rows per processing chunk')
+@click.option('--workers', type=int, default=None,
+              help='Parallel FITS read workers (default: min(os.cpu_count(), 8))')
+@click.option('--lambda-range', type=click.Choice(['BGS', 'RGS']), default=None,
+              help='Optional LRANGE filter')
+@click.option('--dithers-only', is_flag=True,
+              help='Write only per-dither parquet parts, skipping combined rows')
+@click.option('--overwrite', is_flag=True,
+              help='Replace existing parquet parts for this prefix')
+@click.option('--on-error', type=click.Choice(['fail', 'skip']), default='fail', show_default=True,
+              help='Fail on bad rows or skip them and write a failures JSONL')
+@click.option('--progress', 'progress', is_flag=True, default=None,
+              help='Show export progress')
+@click.option('--no-progress', 'progress', flag_value=False,
+              help='Disable export progress')
+def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: int,
+                           workers: Optional[int], lambda_range: Optional[str],
+                           dithers_only: bool, overwrite: bool, on_error: str,
+                           progress: Optional[bool]):
+    """Export local Datalabs combined and per-dither SIR spectra to parquet."""
+    from euclidkit.core.spectra_parquet import dithers_to_parquet
+
+    try:
+        show_progress = bool(progress) if progress is not None else False
+        stats = dithers_to_parquet(
+            catalog_table=catalog_table,
+            output_prefix=output_prefix,
+            chunk_size=chunk_size,
+            workers=workers,
+            lambda_range=lambda_range,
+            include_combined=not dithers_only,
+            overwrite=overwrite,
+            on_error=on_error,
+            show_progress=show_progress,
+        )
+        click.echo(
+            "Dither parquet export completed successfully!\n"
+            "objects_requested={objects_requested} objects_exported={objects_exported} "
+            "combined_rows={combined_rows} dither_rows={dither_rows} skipped_rows={skipped_rows} "
+            "failed_rows={failed_rows} file_missing_rows={file_missing_rows} "
+            "combined_parts={combined_parts} dither_parts={dither_parts} manifest={manifest}".format(
+                objects_requested=stats.objects_requested,
+                objects_exported=stats.objects_exported,
+                combined_rows=stats.combined_rows,
+                dither_rows=stats.dither_rows,
+                skipped_rows=stats.skipped_rows,
+                failed_rows=stats.failed_rows,
+                file_missing_rows=stats.file_missing_rows,
+                combined_parts=len(stats.combined_output_files),
+                dither_parts=len(stats.dither_output_files),
+                manifest=stats.manifest_path,
+            )
+        )
+        if stats.failures_path:
+            click.echo(f"failures={stats.failures_path}")
+    except Exception as e:
+        click.echo(f"Error exporting dither spectra: {e}", err=True)
+        sys.exit(1)
 
 
 # Main command group for crossmatching functionality
@@ -932,6 +1089,7 @@ crossmatch_commands.add_command(query_spectra, name='query-spectra')
 crossmatch_commands.add_command(query_zspe, name='query-zspe')
 crossmatch_commands.add_command(query_cutana, name='query-cutana')
 crossmatch_commands.add_command(compile_spectra, name='compile-spectra')
+crossmatch_commands.add_command(dithers_to_parquet_cli, name='dithers-to-parquet')
 
 
 if __name__ == '__main__':
