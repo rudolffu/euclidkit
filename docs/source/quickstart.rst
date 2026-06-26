@@ -35,7 +35,8 @@ Query spectra for crossmatched objects:
      --crossmatch crossmatch_results.fits \
      --output spectra_sources.fits
 
-Export local Datalabs spectra to raw Parquet parts:
+Export local Datalabs spectra to raw Parquet parts. This is the default
+non-Datalink ``compile-spectra`` output; Datalink still writes FITS files.
 
 .. code-block:: bash
 
@@ -45,6 +46,15 @@ Export local Datalabs spectra to raw Parquet parts:
      --prefix raw_spectra \
      --chunk-size 2000 \
      -L RGS
+
+Export per-dither spectra from the same local Datalabs catalog rows:
+
+.. code-block:: bash
+
+   euclidkit dithers-to-parquet \
+     --catalog-table spectra_sources.fits \
+     --output-prefix ./output/raw_sir \
+     --lambda-range RGS
 
 Compile both Euclid arms via datalink (RGS + BGS):
 

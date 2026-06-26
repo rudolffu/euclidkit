@@ -10,7 +10,7 @@ euclidkit Documentation
    :alt: PyPI version
 
 euclidkit is a toolkit for Euclid archival data analysis workflows, including
-catalog crossmatch, spectra query/compilation, and cutout pipeline helpers.
+catalog crossmatch, spectra query, Parquet/FITS spectra export, and cutout pipeline helpers.
 
 Contents
 --------

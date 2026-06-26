@@ -7,6 +7,7 @@ Requirements
 - Python 3.11+
 - Access to ESA Datalabs volumes for local spectra Parquet/FITS workflows
 - COSMOS credentials for Euclid archive access
+- ``pyarrow`` for Parquet workflows (installed as a normal dependency)
 
 Install from PyPI
 -----------------

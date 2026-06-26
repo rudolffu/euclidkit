@@ -62,7 +62,8 @@ Spectra Parquet Export
 ~~~~~~~~~~~~~~~~~~~~~~
 
 The default local Datalabs spectra workflow writes raw Parquet parts directly
-from catalog rows with ``datalabs_path``, ``file_name``, and ``hdu_index``.
+from catalog rows. Required catalog columns are ``datalabs_path``, ``file_name``,
+``hdu_index``, ``source_id``, ``object_id``, ``ra_obj``, and ``dec_obj``.
 
 .. code-block:: python
 
@@ -74,8 +75,29 @@ from catalog rows with ``datalabs_path``, ``file_name``, and ``hdu_index``.
        chunk_size=2000,
        workers=8,
        lambda_range="RGS",
+       on_error="skip",
    )
 
-Use ``dithers_to_parquet`` from the same module to export combined and per-dither
-SIR spectra. ``SpectrumCompiler`` remains available for legacy multi-extension
-FITS compilation and Datalink FITS outputs.
+``spectra_to_parquet`` returns ``RawParquetStats`` with row counts, output part
+paths, manifest path, and optional failures JSONL path.
+
+Use ``dithers_to_parquet`` to export the combined spectrum and matching
+``*_DITH1D_*_SIGNAL`` spectra for each object:
+
+.. code-block:: python
+
+   from euclidkit.core.spectra_parquet import dithers_to_parquet
+
+   dither_stats = dithers_to_parquet(
+       catalog_table="spectra_sources.fits",
+       output_prefix="./output/raw_sir",
+       chunk_size=2000,
+       workers=8,
+       lambda_range="RGS",
+       include_combined=True,
+   )
+
+``dithers_to_parquet`` returns ``DithersParquetStats`` with object counts,
+combined/dither row counts, output part paths, manifest path, and optional
+failures JSONL path. ``SpectrumCompiler`` remains available for legacy
+multi-extension FITS compilation and Datalink FITS outputs.

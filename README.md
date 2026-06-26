@@ -93,11 +93,15 @@ spectra_table = archive.query_spectra_sources(
     output_file="spectra_sources.fits"
 )
 
-# Combine spectra into a single FITS file
-combined_file = archive.combine_spectra_to_fits(
-    spectra_table=spectra_table,
-    output_file="my_combined_spectra.fits"
+# Export local Datalabs spectra rows to Parquet parts
+from euclidkit.core.spectra_parquet import spectra_to_parquet
+
+stats = spectra_to_parquet(
+    catalog_table="spectra_sources.fits",
+    output_prefix="./output/raw_spectra",
+    lambda_range="RGS",
 )
+print(stats.output_files)
 ```
 
 ## Command Line Interface
@@ -335,43 +339,48 @@ spectrum_hdu = archive.get_individual_spectrum(
     hdu_index=42
 )
 
-# Combine spectra
-combined = archive.combine_spectra_to_fits(
-    spectra_table=spectra,
-    output_file="combined.fits",
-    max_spectra=1000
+# Export queried local Datalabs spectra to raw Parquet parts
+from euclidkit.core.spectra_parquet import spectra_to_parquet
+
+stats = spectra_to_parquet(
+    catalog_table="spectra.fits",
+    output_prefix="./output/raw_spectra",
+    chunk_size=2000,
+    lambda_range="RGS",
 )
+print(stats.manifest_path)
 ```
 
-#### `SpectrumCompiler`
+#### Spectra Parquet Export
 
-Advanced spectrum compilation with chunking support.
+Default local Datalabs spectra export writes raw Parquet parts directly from
+catalog rows containing `datalabs_path`, `file_name`, `hdu_index`, `source_id`,
+`object_id`, `ra_obj`, and `dec_obj`.
 
 ```python
-from euclidkit.core.spectra import SpectrumCompiler
+from euclidkit.core.spectra_parquet import spectra_to_parquet, dithers_to_parquet
 
-compiler = SpectrumCompiler(max_extensions=1000)
-
-# Compile into chunked files
-output_files = compiler.compile_spectra(
-    spectra_table=spectra_table,
-    output_dir="./output",
-    output_prefix="compiled_spectra"
+raw_stats = spectra_to_parquet(
+    catalog_table="spectra_sources.fits",
+    output_prefix="./output/raw_spectra",
+    chunk_size=2000,
+    workers=8,
+    lambda_range="RGS",
+    on_error="skip",
 )
 
-# Create single FITS file
-single_file = compiler.compile_single_fits(
-    spectra_table=spectra_table,
-    output_file="all_spectra.fits"
-)
-
-# Generate metadata table
-metadata = compiler.create_metadata_table(
-    spectra_table=spectra_table,
-    output_files=output_files,
-    output_dir="./output"
+dither_stats = dithers_to_parquet(
+    catalog_table="spectra_sources.fits",
+    output_prefix="./output/raw_sir",
+    chunk_size=2000,
+    workers=8,
+    lambda_range="RGS",
+    include_combined=True,
 )
 ```
+
+`SpectrumCompiler` remains available for legacy local multi-extension FITS
+compilation and Datalink FITS outputs.
 
 ### Workflow Examples
 
@@ -379,7 +388,7 @@ metadata = compiler.create_metadata_table(
 
 ```python
 from euclidkit.core.data_access import EuclidArchive
-from euclidkit.core.spectra import SpectrumCompiler
+from euclidkit.core.spectra_parquet import spectra_to_parquet, dithers_to_parquet
 import pandas as pd
 
 # 1. Initialize archive
@@ -404,23 +413,23 @@ spectra_sources = archive.query_spectra_sources(
 
 print(f"Found {len(spectra_sources)} spectra for {len(crossmatches)} crossmatches")
 
-# 5. Create combined FITS file (for small samples)
-if len(spectra_sources) <= 1000:
-    combined_spectra = archive.combine_spectra_to_fits(
-        spectra_table=spectra_sources,
-        output_file='qso_combined_spectra.fits'
-    )
-    print(f"Combined spectra saved to: {combined_spectra}")
+# 5. Export raw spectra to Parquet parts for downstream analysis
+raw_stats = spectra_to_parquet(
+    catalog_table='qso_spectra_sources.fits',
+    output_prefix='./spectra_parquet/qso_raw',
+    chunk_size=2000,
+    lambda_range='RGS',
+    on_error='skip',
+)
+print(f"Wrote {len(raw_stats.output_files)} raw spectra parquet parts")
 
-# 6. Or use chunked compilation for large samples
-else:
-    compiler = SpectrumCompiler(max_extensions=2000)
-    output_files = compiler.compile_spectra(
-        spectra_table=spectra_sources,
-        output_dir='./spectra_chunks',
-        output_prefix='qso_spectra'
-    )
-    print(f"Created {len(output_files)} chunked files")
+# 6. Optionally export per-dither spectra for the same catalog rows
+dither_stats = dithers_to_parquet(
+    catalog_table='qso_spectra_sources.fits',
+    output_prefix='./spectra_parquet/qso_sir',
+    lambda_range='RGS',
+)
+print(f"Wrote {len(dither_stats.dither_output_files)} dither parquet parts")
 
 archive.logout()
 ```

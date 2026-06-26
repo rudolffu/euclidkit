@@ -10,6 +10,7 @@ Top-level commands
 - ``euclidkit query-spectra``
 - ``euclidkit query-cutana``
 - ``euclidkit compile-spectra``
+- ``euclidkit dithers-to-parquet``
 - ``euclidkit upload-table``
 - ``euclidkit cutouts``
 - ``euclidkit select-footprint``
@@ -198,6 +199,16 @@ Datalink dual-arm example:
      --environment IDR \
      --schema sedm \
      -L BOTH
+
+Option semantics:
+
+- Non-Datalink ``compile-spectra`` defaults to Parquet output.
+- ``--output-format fits`` selects the legacy local multi-extension FITS compiler.
+- ``--use-datalink`` remains FITS-only and ignores ``--output-format parquet``.
+- Parquet workers default to ``min(os.cpu_count(), 8)`` when ``--workers`` is omitted.
+- FITS compatibility and Datalink paths default to one worker.
+- ``--on-error fail`` stops on the first unreadable Parquet row; ``--on-error skip`` continues and writes ``<prefix>_failures.jsonl``.
+
 
 dithers-to-parquet
 ------------------

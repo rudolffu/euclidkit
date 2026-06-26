@@ -119,4 +119,6 @@ Notes
 - Parquet workers default to ``min(os.cpu_count(), 8)``.
 - FITS compatibility and Datalink modes default to one worker.
 - Use ``--limit N`` with ``compile-spectra`` for quick Parquet or FITS tests.
-- Use ``--on-error skip`` to continue past unreadable rows and write a failures JSONL.
+- Existing Parquet part, manifest, or failures files require ``--overwrite``.
+- ``--on-error fail`` stops on the first unreadable row.
+- ``--on-error skip`` continues past unreadable rows and writes a failures JSONL.
