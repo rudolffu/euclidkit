@@ -30,7 +30,10 @@ A common spectra workflow is:
 access. It reads Euclid ``object_id`` values from the crossmatch table, joins
 them to the archive spectra-source table through ``source_id``, and writes a
 spectra-source catalogue with the local Datalabs file information needed by
-``compile-spectra``.
+``compile-spectra``. If you do not already have this spectra-source catalogue,
+generate it with the `query-spectra CLI
+<https://euclidkit.readthedocs.io/en/latest/cli.html#query-spectra>`__ before
+running ``compile-spectra``.
 
 ``query-spectra`` matching
 --------------------------
@@ -55,6 +58,18 @@ Non-Datalink ``compile-spectra`` is a local Datalabs workflow. It reads each row
 from the spectra-source catalogue, combines ``datalabs_path`` and ``file_name``
 to locate the FITS file, opens the requested ``hdu_index``, and writes the raw
 spectrum arrays to chunked Parquet files. This is the default output mode.
+
+If you do not already have ``spectra_sources.fits``, create it first:
+
+.. code-block:: bash
+
+   euclidkit query-spectra \
+     --crossmatch crossmatch_results.fits \
+     --output spectra_sources.fits \
+     --environment IDR \
+     --idr-field WIDE
+
+Then export the local Datalabs spectra:
 
 .. code-block:: bash
 
