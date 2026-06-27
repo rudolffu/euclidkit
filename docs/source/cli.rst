@@ -8,13 +8,14 @@ Top-level commands
 - ``euclidkit diagnostics``
 - ``euclidkit crossmatch``
 - ``euclidkit query-spectra``
-- ``euclidkit query-segmap``
-- ``euclidkit query-cutana``
-- ``euclidkit compile-segmap``
+- ``euclidkit query-zspe``
 - ``euclidkit compile-spectra``
 - ``euclidkit dithers-to-parquet``
-- ``euclidkit upload-table``
+- ``euclidkit query-cutana``
 - ``euclidkit cutouts``
+- ``euclidkit query-segmap``
+- ``euclidkit compile-segmap``
+- ``euclidkit upload-table``
 - ``euclidkit select-footprint``
 
 Use ``--help`` on any command for full options:
@@ -118,9 +119,8 @@ Matching mode recommendation:
 query-spectra
 -------------
 
-Query spectra-source rows for objects in a crossmatch table.
-
-Example:
+Query spectra-source rows for objects in a crossmatch table. The match is by
+Euclid object ID, not by sky position.
 
 .. code-block:: bash
 
@@ -129,6 +129,155 @@ Example:
      --output spectra_sources.fits \
      --environment IDR \
      --idr-field WIDE
+
+Matching behavior:
+
+- The input ``--crossmatch`` table must contain ``object_id``. If not,
+  ``object_id_euclid`` is accepted as a fallback.
+- Unique object IDs are uploaded as a temporary ``object_id`` column.
+- The archive query joins ``spectra_source.source_id = uploaded.object_id``.
+- ``ra``/``dec`` columns are not used for matching.
+- Rows with missing ``datalabs_path`` are excluded because local Datalabs
+  compilation needs a file path.
+
+Output columns include ``source_id``, ``ra_obj``, ``dec_obj``,
+``datalabs_path``, ``file_name``, ``hdu_index``, and the uploaded
+``object_id``. For IDR, ``--idr-field WIDE`` queries
+``catalogue.spectra_source_wide`` and ``--idr-field DEEP`` queries
+``catalogue.spectra_source_deep``. Other environments use the corresponding
+``spectra_source`` table for the selected release.
+
+The resulting table is the usual input to ``compile-spectra``. See
+:doc:`spectra_compilation` for the full spectra workflow.
+
+query-zspe
+----------
+
+Query IDR SPE redshift candidates by ``object_id`` and join the matched SPE
+columns back to the input table.
+
+.. code-block:: bash
+
+   euclidkit query-zspe \
+     --crossmatch crossmatch_results.fits \
+     --output zspe_matches.fits \
+     --object-type qso \
+     --idr-field WIDE
+
+``query-zspe`` supports ``--object-type qso|galaxy``. WIDE queries search the
+``wide_survey`` candidate table first and then use ``wide`` as the fallback for
+remaining objects. Use ``--full-async`` for one server-side async query with the
+same WIDE fallback behavior.
+
+compile-spectra
+---------------
+
+Compile or export spectra rows returned by ``query-spectra``. Non-Datalink mode
+is local Datalabs file access and defaults to raw Parquet output. Datalink mode
+retrieves spectra through the archive service and remains FITS-only.
+
+Default local Datalabs Parquet example:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix raw_spectra \
+     --chunk-size 2000 \
+     -L RGS
+
+Legacy local FITS example:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_spectra \
+     --output-format fits
+
+Datalink dual-arm FITS example:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra \
+     --spectra-table spectra_sources.fits \
+     --output-dir ./output \
+     --prefix compiled_dl \
+     --use-datalink \
+     --environment IDR \
+     --schema sedm \
+     -L BOTH
+
+Option semantics:
+
+- Non-Datalink ``compile-spectra`` reads local ``datalabs_path`` + ``file_name``
+  FITS files and writes Parquet by default.
+- ``--output-format fits`` selects the legacy local multi-extension FITS compiler.
+- ``--use-datalink`` retrieves spectra from the archive by source ID, remains
+  FITS-only, and ignores ``--output-format parquet``.
+- Parquet workers default to ``min(os.cpu_count(), 8)`` when ``--workers`` is omitted.
+- FITS compatibility and Datalink paths default to one worker.
+- ``--on-error fail`` stops on the first unreadable Parquet row; ``--on-error skip`` continues and writes ``<prefix>_failures.jsonl``.
+
+See :doc:`spectra_compilation` for the detailed Datalabs, Datalink, arm
+selection, and output-file behavior.
+
+dithers-to-parquet
+------------------
+
+Export local Datalabs combined and per-dither SIR spectra to Parquet parts.
+This command reads local ``datalabs_path`` + ``file_name`` entries and does not
+use Datalink.
+
+.. code-block:: bash
+
+   euclidkit dithers-to-parquet \
+     --catalog-table spectra_sources.fits \
+     --output-prefix ./output/raw_sir \
+     --lambda-range RGS \
+     --workers 8
+
+query-cutana
+------------
+
+Build Cutana input CSV from source rows containing object IDs or coordinates.
+
+Example:
+
+.. code-block:: bash
+
+   euclidkit query-cutana \
+     --sources my_sources.fits \
+     --output cutana_input.csv \
+     --instrument VIS \
+     --cutout-size arcsec \
+     --cutout-size-value 15
+
+IDR DEEP example:
+
+.. code-block:: bash
+
+   euclidkit query-cutana \
+     --sources my_sources.fits \
+     --output cutana_deep.csv \
+     --instrument NISP \
+     --nisp-filters NIR_Y,NIR_H \
+     --environment IDR \
+     --idr-field DEEP \
+     --idr-deep-partition both \
+     --cutout-size arcsec \
+     --cutout-size-value 15
+
+cutouts
+-------
+
+Generate Euclid image cutouts from catalogue positions or object metadata.
+
+.. code-block:: bash
+
+   euclidkit cutouts --help
 
 query-segmap
 ------------
@@ -168,101 +317,6 @@ Example:
 writes one raw-label FITS cutout per source row. See :doc:`segmentation_maps`
 for required columns, output semantics, and error-handling options.
 
-query-cutana
-------------
-
-Build Cutana input CSV from source rows containing object IDs or coordinates.
-
-Example:
-
-.. code-block:: bash
-
-   euclidkit query-cutana \
-     --sources my_sources.fits \
-     --output cutana_input.csv \
-     --instrument VIS \
-     --cutout-size arcsec \
-     --cutout-size-value 15
-
-IDR DEEP example:
-
-.. code-block:: bash
-
-   euclidkit query-cutana \
-     --sources my_sources.fits \
-     --output cutana_deep.csv \
-     --instrument NISP \
-     --nisp-filters NIR_Y,NIR_H \
-     --environment IDR \
-     --idr-field DEEP \
-     --idr-deep-partition both \
-     --cutout-size arcsec \
-     --cutout-size-value 15
-
-compile-spectra
----------------
-
-Export local Datalabs spectra to raw Parquet parts by default. Use
-``--output-format fits`` for the legacy local FITS compiler, or
-``--use-datalink`` for the unchanged Datalink FITS workflow.
-
-Default Parquet example:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix raw_spectra \
-     --chunk-size 2000 \
-     -L RGS
-
-Legacy FITS example:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_spectra \
-     --output-format fits
-
-Datalink dual-arm example:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_dl \
-     --use-datalink \
-     --environment IDR \
-     --schema sedm \
-     -L BOTH
-
-Option semantics:
-
-- Non-Datalink ``compile-spectra`` defaults to Parquet output.
-- ``--output-format fits`` selects the legacy local multi-extension FITS compiler.
-- ``--use-datalink`` remains FITS-only and ignores ``--output-format parquet``.
-- Parquet workers default to ``min(os.cpu_count(), 8)`` when ``--workers`` is omitted.
-- FITS compatibility and Datalink paths default to one worker.
-- ``--on-error fail`` stops on the first unreadable Parquet row; ``--on-error skip`` continues and writes ``<prefix>_failures.jsonl``.
-
-
-dithers-to-parquet
-------------------
-
-Export local Datalabs combined and per-dither SIR spectra to Parquet parts.
-
-.. code-block:: bash
-
-   euclidkit dithers-to-parquet \
-     --catalog-table spectra_sources.fits \
-     --output-prefix ./output/raw_sir \
-     --lambda-range RGS \
-     --workers 8
-
 upload-table
 ------------
 
@@ -275,3 +329,16 @@ Example:
    euclidkit upload-table \
      --input my_sources.fits \
      --table-name my_sources_work
+
+select-footprint
+----------------
+
+Filter an input catalogue to rows that fall within a packaged Euclid footprint
+MOC.
+
+.. code-block:: bash
+
+   euclidkit select-footprint \
+     --input my_sources.fits \
+     --output in_footprint.fits \
+     --survey mer-wide

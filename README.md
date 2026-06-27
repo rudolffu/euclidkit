@@ -194,22 +194,20 @@ euclidkit upload-table \
 ### Querying Spectra
 
 ```bash
-# Query spectra from crossmatch results
+# Query spectra-source rows from crossmatch results.
+# Matching uses object_id, not sky position.
 euclidkit query-spectra \
     --crossmatch crossmatch_results.fits \
     --output spectra_sources.fits \
     --environment IDR \
     --idr-field WIDE \
     --verbose
-
-# Query spectra by object IDs and auto-combine
-euclidkit query-spectra \
-    --object-ids 123456,789012,345678 \
-    --output spectra_sources.fits \
-    --combine-output my_spectra.fits \
-    --max-spectra 100 \
-    --verbose
 ```
+
+`query-spectra` reads `object_id` (or `object_id_euclid`) from the input table
+and joins `spectra_source.source_id = object_id`. The output table is the usual
+input to `compile-spectra`; see the Sphinx spectra compilation guide for the
+full Datalabs and Datalink workflow details.
 
 ### Querying Segmentation Maps
 
