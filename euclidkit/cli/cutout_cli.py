@@ -10,7 +10,7 @@ from typing import Optional, List
 import json
 
 
-@click.command()
+@click.command(short_help='Generate Euclid image cutouts.')
 @click.option(
     '--source', '-s',
     help='Single source: object_id or "ra,dec" (degrees)'

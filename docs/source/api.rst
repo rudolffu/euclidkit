@@ -58,6 +58,40 @@ The same ``idr_deep_partition`` argument is available on
 metadata. It applies only to MER catalogue selection, not spectra-source or
 SPE redshift candidate table selection.
 
+Segmentation-map metadata lookup:
+
+.. code-block:: python
+
+   segmaps = archive.query_segmentation_maps(
+       source_table=results,
+       output_file="segmentation_maps.fits",
+   )
+
+``query_segmentation_maps`` requires ``SEGMENTATION_MAP_ID``, ``object_id``,
+and source coordinates. It prefers ``ra``/``dec`` columns and falls back to
+``mer_ra``/``mer_dec`` when the former are absent. It computes ``tile_index`` as
+``floor(SEGMENTATION_MAP_ID / 1_000_000)`` before joining to
+``q1.mer_segmentation_map`` for ``PDR``, ``dr1.mer_segmentation_map`` for
+``IDR``, and ``sedm.mer_segmentation_map`` for ``OTF``/``REG``. This result is
+the metadata input for local segmentation-map cutout compilation.
+
+Compile local segmentation-map cutouts from those query results:
+
+.. code-block:: python
+
+   from euclidkit.core.segmap import compile_segmap_cutouts
+
+   stats = compile_segmap_cutouts(
+       input_table="segmentation_maps.fits",
+       output_dir="./segmap_cutouts",
+       size_arcsec=10.0,
+   )
+
+``compile_segmap_cutouts`` opens local ``datalabs_path`` + ``file_name`` FITS
+files with memmap, writes one raw-label FITS cutout per input row, and returns
+``SegmapCutoutStats`` with requested, written, failed, skipped-existing, and
+output-file counts.
+
 Spectra Parquet Export
 ~~~~~~~~~~~~~~~~~~~~~~
 

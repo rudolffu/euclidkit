@@ -258,3 +258,55 @@ def test_lookup_mer_source_info_by_position_uses_crossmatch():
     assert kwargs['idr_deep_partition'] == 'survey'
     assert 'segmentation_map_id' in resolved.columns
     assert len(resolved) == 1
+
+
+def test_get_files_mosaic_from_segmentation_uses_computed_tile_index():
+    """Segmentation shortcut should upload floor(id / 1e6) tile_index and join on it."""
+    generator, archive = _build_generator_with_archive()
+    captured = {}
+    job = Mock()
+    job.get_results.return_value = Table({
+        'object_id': [100001],
+        'right_ascension': [150.0],
+        'declination': [2.0],
+        'segmentation_map_id': [1234567890000],
+        'file_name': ['mock.fits'],
+        'file_path': ['/data/euclid/mock.fits'],
+        'datalabs_path': ['/data/euclid'],
+        'mosaic_product_oid': [1],
+        'tile_index': [1234567],
+        'instrument_name': ['VIS'],
+        'filter_name': ['VIS'],
+        'image_ra': [150.0],
+        'image_dec': [2.0],
+    })
+
+    def fake_launch_job_async(query, upload_resource=None, upload_table_name=None):
+        captured['query'] = query
+        captured['upload_table'] = Table.read(upload_resource, format='votable')
+        captured['upload_table_name'] = upload_table_name
+        return job
+
+    archive.euclid.launch_job_async.side_effect = fake_launch_job_async
+    sources = pd.DataFrame({
+        'object_id': [100001, 100002, 100003],
+        'right_ascension': [150.0, 151.0, 152.0],
+        'declination': [2.0, 2.1, 2.2],
+        'segmentation_map_id': [1234567890000, None, 'bad'],
+    })
+
+    result = generator._get_files_mosaic_from_segmentation(
+        sources,
+        instrument_name='VIS',
+        nisp_filters=None,
+        radec_colnames={'ra_colname': 'right_ascension', 'dec_colname': 'declination'},
+    )
+
+    query = captured['query']
+    assert 'mosaics.tile_index = u.tile_index' in query
+    assert 'SUBSTRING' not in query
+    assert list(captured['upload_table']['tile_index']) == [1234567]
+    assert [str(value) for value in captured['upload_table']['segmentation_map_id']] == [
+        '1234567890000'
+    ]
+    assert len(result) == 1

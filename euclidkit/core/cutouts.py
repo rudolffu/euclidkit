@@ -611,7 +611,7 @@ class CutoutGenerator:
         Get mosaic files using segmentation_map_id -> tile_index shortcut.
 
         This avoids per-source positional CONTAINS crossmatch by joining source rows
-        to ``sedm.mosaic_product`` on the first 9 digits of segmentation_map_id.
+        to ``sedm.mosaic_product`` on ``floor(segmentation_map_id / 1_000_000)``.
         """
         if not self.archive._logged_in:
             self.archive.login()
@@ -628,13 +628,20 @@ class CutoutGenerator:
             return pd.DataFrame()
 
         df_work = df[required_cols + ([c for c in ['object_id'] if c in df.columns])].copy()
-        df_work = df_work[df_work['segmentation_map_id'].notna()]
+        df_work['tile_index'] = [
+            EuclidArchive._segmentation_tile_index(value)
+            for value in df_work['segmentation_map_id']
+        ]
+        df_work = df_work[df_work['tile_index'].notna()].copy()
         if len(df_work) == 0:
             self._last_cutana_mosaic_query = (
-                "<skipped: segmentation_map_id present but all values are null/NaN after preprocessing>"
+                "<skipped: segmentation_map_id present but all values are null/non-numeric after preprocessing>"
             )
-            logger.warning("Segmentation shortcut skipped: all segmentation_map_id values are null/NaN.")
+            logger.warning(
+                "Segmentation shortcut skipped: all segmentation_map_id values are null/non-numeric."
+            )
             return pd.DataFrame()
+        df_work['tile_index'] = df_work['tile_index'].astype(np.int64)
 
         upload_table = Table.from_pandas(df_work)
         with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
@@ -657,7 +664,7 @@ class CutoutGenerator:
             mosaics.filter_name, mosaics.ra AS image_ra, mosaics.dec AS image_dec
         FROM TAP_UPLOAD.{upload_name} AS u
         JOIN sedm.mosaic_product AS mosaics
-          ON CAST(mosaics.tile_index AS CHAR(25)) = SUBSTRING(CAST(u.segmentation_map_id AS CHAR(25)), 1, 9)
+          ON mosaics.tile_index = u.tile_index
         WHERE mosaics.datalabs_path IS NOT NULL
           AND mosaics.instrument_name='{instrument_name}'
         """

@@ -35,6 +35,32 @@ Query spectra for crossmatched objects:
      --crossmatch crossmatch_results.fits \
      --output spectra_sources.fits
 
+Query segmentation-map metadata from MER crossmatch results:
+
+.. code-block:: bash
+
+   euclidkit query-segmap \
+     --input crossmatch_results.fits \
+     --output segmentation_maps.fits \
+     --environment IDR
+
+``query-segmap`` requires ``SEGMENTATION_MAP_ID``, ``object_id``, and source
+coordinates. It prefers ``ra``/``dec`` and falls back to ``mer_ra``/``mer_dec``.
+It computes ``tile_index = floor(SEGMENTATION_MAP_ID / 1_000_000)`` locally
+before joining to the archive ``mer_segmentation_map`` table. The result is
+the input for local ``compile-segmap`` cutout extraction.
+
+Compile 10 arcsec segmentation-map cutouts:
+
+.. code-block:: bash
+
+   euclidkit compile-segmap \
+     --input segmentation_maps.fits \
+     --output-dir ./segmap_cutouts
+
+The command opens local ``datalabs_path`` + ``file_name`` FITS files from the
+``query-segmap`` table and writes one raw-label FITS cutout per source row.
+
 Export local Datalabs spectra to raw Parquet parts. This is the default
 non-Datalink ``compile-spectra`` output; Datalink still writes FITS files.
 

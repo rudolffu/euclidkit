@@ -10,7 +10,14 @@ from click.testing import CliRunner
 from astropy.table import Table
 import numpy as np
 
-from euclidkit.cli.crossmatch_cli import crossmatch, query_spectra, query_zspe, compile_spectra, upload_table
+from euclidkit.cli.crossmatch_cli import (
+    crossmatch,
+    query_spectra,
+    query_zspe,
+    query_segmap,
+    compile_spectra,
+    upload_table,
+)
 
 
 class TestCrossmatchCLI:
@@ -713,6 +720,115 @@ class TestQueryZspeCLI:
                     assert "Chunks processed: 2 (chunk size: 2)" in result.output
         finally:
             os.unlink(crossmatch_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+
+class TestQuerySegmapCLI:
+    """Test cases for query-segmap CLI command."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+        self.input_table = Table({
+            'object_id': [100001, 100002],
+            'SEGMENTATION_MAP_ID': [1234567890000, 9876543210000],
+            'ra': [150.0, 151.0],
+            'dec': [2.0, 2.1],
+        })
+
+    def create_temp_input_file(self):
+        """Create a temporary query-segmap input file."""
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.fits', delete=False)
+        self.input_table.write(temp_file.name, format='fits', overwrite=True)
+        return temp_file.name
+
+    def test_query_segmap_defaults_to_pdr_and_prints_counts(self):
+        """query-segmap should load input, query archive, and print row-count details."""
+        input_file = self.create_temp_input_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive._last_segmap_valid_tile_count = 2
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.query_segmentation_maps.return_value = Table({
+                        'object_id': [100001],
+                        'segmentation_map_id': [1234567890000],
+                    })
+
+                    with patch('euclidkit.utils.io.load_table', return_value=self.input_table):
+                        result = self.runner.invoke(query_segmap, [
+                            '--input', input_file,
+                            '--output', output_file.name,
+                        ])
+
+                    assert result.exit_code == 0
+                    mock_archive_class.assert_called_once_with(environment='PDR')
+                    mock_archive.login.assert_called_once()
+                    mock_archive.query_segmentation_maps.assert_called_once()
+                    kwargs = mock_archive.query_segmentation_maps.call_args.kwargs
+                    assert kwargs['source_table'] is self.input_table
+                    assert kwargs['output_file'] == output_file.name
+                    assert "Segmentation map query completed: 1 matches found" in result.output
+                    assert "Input rows: 2" in result.output
+                    assert "Valid tile rows: 2" in result.output
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_query_segmap_accepts_idr_without_field_options(self):
+        """query-segmap -e IDR should forward only the environment selection."""
+        input_file = self.create_temp_input_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive._last_segmap_valid_tile_count = 2
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.query_segmentation_maps.return_value = Table()
+
+                    with patch('euclidkit.utils.io.load_table', return_value=self.input_table):
+                        result = self.runner.invoke(query_segmap, [
+                            '--input', input_file,
+                            '--output', output_file.name,
+                            '--environment', 'IDR',
+                        ])
+
+                    assert result.exit_code == 0
+                    mock_archive_class.assert_called_once_with(environment='IDR')
+                    call_kwargs = mock_archive.query_segmentation_maps.call_args.kwargs
+                    assert 'idr_field' not in call_kwargs
+                    assert 'idr_deep_partition' not in call_kwargs
+        finally:
+            os.unlink(input_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_query_segmap_surfaces_missing_segmentation_id(self):
+        """Missing SEGMENTATION_MAP_ID should be reported as a CLI error."""
+        input_file = self.create_temp_input_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+                    mock_archive.query_segmentation_maps.side_effect = ValueError(
+                        "Input table must contain SEGMENTATION_MAP_ID. Run euclidkit crossmatch first "
+                        "to add segmentation_map_id before query-segmap."
+                    )
+
+                    with patch('euclidkit.utils.io.load_table', return_value=self.input_table):
+                        result = self.runner.invoke(query_segmap, [
+                            '--input', input_file,
+                            '--output', output_file.name,
+                        ])
+
+                    assert result.exit_code != 0
+                    assert "Run euclidkit crossmatch first" in result.output
+        finally:
+            os.unlink(input_file)
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
 

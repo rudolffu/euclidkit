@@ -8,7 +8,10 @@ from typing import Optional
 import click
 
 
-@click.command(name="select-footprint")
+@click.command(
+    name="select-footprint",
+    short_help="Filter a catalog by Euclid footprint.",
+)
 @click.option(
     "--input",
     "-i",

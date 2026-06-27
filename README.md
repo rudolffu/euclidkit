@@ -10,6 +10,7 @@ A comprehensive Python package for Euclid archival data analysis, designed for u
 `euclidkit` facilitates advanced data exploration and visualization for Euclid Q1/(I)DR1 archival releases, including:
 
 - **Data Access**: Query and crossmatch sources with the Euclid MER catalogue
+- **Segmentation Maps**: Resolve MER segmentation-map metadata from crossmatch results
 - **Spectroscopic Analysis**: Access, download, and combine NISP spectra of archival sources
 - **Unified Workflow**: Streamlined tools for researchers working with Euclid spectroscopic data
 
@@ -209,6 +210,31 @@ euclidkit query-spectra \
     --max-spectra 100 \
     --verbose
 ```
+
+### Querying Segmentation Maps
+
+```bash
+# Resolve segmentation-map files and WCS metadata from MER crossmatch results.
+# The input must contain SEGMENTATION_MAP_ID, object_id, and coordinates.
+# query-segmap prefers ra/dec and falls back to mer_ra/mer_dec.
+euclidkit query-segmap \
+    --input crossmatch_results.fits \
+    --output segmentation_maps.fits \
+    --environment IDR
+
+# Create one raw-label 10 arcsec FITS cutout per source row
+euclidkit compile-segmap \
+    --input segmentation_maps.fits \
+    --output-dir ./segmap_cutouts
+```
+
+`query-segmap` computes `tile_index = floor(SEGMENTATION_MAP_ID / 1_000_000)`
+locally, then joins to `q1.mer_segmentation_map` for PDR,
+`dr1.mer_segmentation_map` for IDR, and `sedm.mer_segmentation_map` for OTF/REG.
+Run `euclidkit crossmatch` first if your table does not yet contain
+`SEGMENTATION_MAP_ID`. `compile-segmap` reads local segmentation-map FITS files
+from `datalabs_path` + `file_name`, groups rows by tile file, and preserves the
+raw segmentation-label pixels in each cutout.
 
 ### Building Cutana Input
 

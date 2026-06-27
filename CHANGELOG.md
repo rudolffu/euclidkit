@@ -15,6 +15,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Local Datalabs spectra Parquet export via `spectra_to_parquet`, the default
   non-Datalink `euclidkit compile-spectra` path, and new
   `euclidkit dithers-to-parquet` command.
+- `euclidkit query-segmap` and `EuclidArchive.query_segmentation_maps` for
+  resolving MER segmentation-map metadata from crossmatch outputs.
+- `euclidkit compile-segmap` and `compile_segmap_cutouts` for local raw-label
+  FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
 - IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by
@@ -22,6 +26,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Non-Datalink `compile-spectra` now defaults to Parquet output with automatic
   multiprocessing; legacy local FITS output is available via
   `--output-format fits`, and Datalink remains FITS-only.
+- Cutana segmentation-map shortcut now computes
+  `floor(segmentation_map_id / 1_000_000)` locally and joins directly on
+  `tile_index`, matching `query-segmap`.
 
 ## [0.2.0] - 2026-03-02
 

@@ -188,6 +188,29 @@ class EuclidArchive:
         except (TypeError, ValueError):
             return False
 
+    @staticmethod
+    def _segmentation_tile_index(segmentation_map_id: Any) -> Optional[int]:
+        """Compute floor(segmentation_map_id / 1_000_000), returning None for invalid values."""
+        if EuclidArchive._is_missing_table_value(segmentation_map_id):
+            return None
+
+        try:
+            if isinstance(segmentation_map_id, bytes):
+                segmentation_map_id = segmentation_map_id.decode("utf-8", errors="replace")
+            if isinstance(segmentation_map_id, str):
+                segmentation_map_id = segmentation_map_id.strip()
+                if not segmentation_map_id:
+                    return None
+            return int(segmentation_map_id) // 1_000_000
+        except (TypeError, ValueError, OverflowError):
+            try:
+                value = float(segmentation_map_id)
+                if not np.isfinite(value):
+                    return None
+                return int(np.floor(value / 1_000_000))
+            except (TypeError, ValueError, OverflowError):
+                return None
+
     def _drop_empty_table_columns(self, table: Table) -> Tuple[Table, List[str]]:
         """
         Remove columns where every row is null/missing.
@@ -1842,6 +1865,82 @@ class EuclidArchive:
         }
         prefix = prefix_by_env.get(self.environment, 'q1')
         return f"{prefix}.spectra_source"
+
+    def _get_segmentation_map_table_name(self) -> str:
+        """Get environment-specific MER segmentation-map table name."""
+        table_by_env = {
+            'PDR': 'q1.mer_segmentation_map',
+            'IDR': 'dr1.mer_segmentation_map',
+            'OTF': 'sedm.mer_segmentation_map',
+            'REG': 'sedm.mer_segmentation_map',
+        }
+        return table_by_env.get(self.environment, 'q1.mer_segmentation_map')
+
+    @staticmethod
+    def _case_insensitive_column(table: Table, column_name: str) -> Optional[str]:
+        """Return the actual table column matching column_name case-insensitively."""
+        wanted = column_name.lower()
+        for actual in table.colnames:
+            if str(actual).lower() == wanted:
+                return str(actual)
+        return None
+
+    def _prepare_segmentation_upload_table(self, source_table: Table) -> Table:
+        """Build a canonical TAP upload table for segmentation-map lookup."""
+        seg_col = self._case_insensitive_column(source_table, 'SEGMENTATION_MAP_ID')
+        if seg_col is None:
+            raise ValueError(
+                "Input table must contain SEGMENTATION_MAP_ID. Run euclidkit crossmatch first "
+                "to add segmentation_map_id before query-segmap."
+            )
+
+        object_id_col = self._case_insensitive_column(source_table, 'object_id')
+        ra_col = (
+            self._case_insensitive_column(source_table, 'ra')
+            or self._case_insensitive_column(source_table, 'mer_ra')
+        )
+        dec_col = (
+            self._case_insensitive_column(source_table, 'dec')
+            or self._case_insensitive_column(source_table, 'mer_dec')
+        )
+        required = {
+            'object_id': object_id_col,
+            'ra or mer_ra': ra_col,
+            'dec or mer_dec': dec_col,
+        }
+        missing = [name for name, actual in required.items() if actual is None]
+        if missing:
+            raise ValueError(
+                "Input table missing required column(s) for query-segmap output: "
+                + ", ".join(missing)
+            )
+
+        rows: Dict[str, List[Any]] = {
+            'object_id': [],
+            'segmentation_map_id': [],
+            'ra': [],
+            'dec': [],
+            'tile_index': [],
+        }
+        for row in source_table:
+            tile_index = self._segmentation_tile_index(row[seg_col])
+            if tile_index is None:
+                continue
+            rows['object_id'].append(row[object_id_col])
+            rows['segmentation_map_id'].append(row[seg_col])
+            rows['ra'].append(row[ra_col])
+            rows['dec'].append(row[dec_col])
+            rows['tile_index'].append(tile_index)
+
+        if not rows['tile_index']:
+            raise ValueError(
+                "No valid SEGMENTATION_MAP_ID values found after dropping null/non-numeric rows."
+            )
+
+        upload_table = Table()
+        for colname, values in rows.items():
+            upload_table[colname] = values
+        return upload_table
     
     def _crossmatch_batch(
         self, 
@@ -2597,6 +2696,96 @@ class EuclidArchive:
             logger.info(f"Saved SPE redshift candidate results to {output_file}")
 
         return final_result
+
+    def query_segmentation_maps(
+        self,
+        source_table: Table,
+        output_file: Optional[Union[str, Path]] = None,
+    ) -> Table:
+        """
+        Query MER segmentation-map metadata using SEGMENTATION_MAP_ID tile indices.
+
+        The upload join key is computed locally as
+        ``floor(SEGMENTATION_MAP_ID / 1_000_000)`` and joined to the archive
+        segmentation-map table on ``tile_index``.
+        """
+        if not self._logged_in:
+            logger.warning("Not logged in - attempting login with default credentials")
+            self.login()
+
+        if source_table is None:
+            raise ValueError("Must provide source_table")
+
+        self._ensure_client()
+        upload_table = self._prepare_segmentation_upload_table(source_table)
+        upload_table, _ = self._sanitize_upload_table_columns(upload_table)
+        table_name = self._get_segmentation_map_table_name()
+
+        self._last_segmap_input_row_count = len(source_table)
+        self._last_segmap_valid_tile_count = len(upload_table)
+        self._last_segmap_table_name = table_name
+
+        with tempfile.NamedTemporaryFile(suffix=".vot", delete=False) as tmp_file:
+            upload_table.write(tmp_file.name, format="votable", overwrite=True)
+            tmp_name = tmp_file.name
+
+        try:
+            upload_name = f"user_segmap_{np.random.randint(10000, 99999)}"
+            query = f"""
+            SELECT
+                u.object_id,
+                u.segmentation_map_id,
+                u.ra,
+                u.dec,
+                s.datalabs_path,
+                s.file_path,
+                s.file_name,
+                s.crpix1,
+                s.crpix2,
+                s.crval1,
+                s.crval2,
+                s.dec AS seg_dec,
+                s.ra AS seg_ra,
+                s.data_set_release,
+                s.environment,
+                s.tile_index,
+                s.processing_mode
+            FROM TAP_UPLOAD.{upload_name} AS u
+            JOIN {table_name} AS s
+                ON u.tile_index = s.tile_index
+            """
+            self._last_segmap_query = query.strip()
+
+            logger.info(
+                "Querying %s for %d valid segmentation tile rows",
+                table_name,
+                len(upload_table),
+            )
+            if len(upload_table) < 2000:
+                job = self.euclid.launch_job(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+            else:
+                job = self.euclid.launch_job_async(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+
+            result = job.get_results()
+            result = result if result is not None else Table()
+            self._last_segmap_matched_row_count = len(result)
+
+            if output_file:
+                save_table(result, output_file)
+                logger.info("Saved segmentation-map query results to %s", output_file)
+
+            return result
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
     
     def query_spectra_sources(
         self,

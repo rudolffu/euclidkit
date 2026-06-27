@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 
-@click.command()
+@click.command(short_help='Crossmatch sources with Euclid MER.')
 @click.option('--input', '-i', required=False, type=click.Path(exists=True),
               help='Input source table (CSV, FITS, or VOTable)')
 @click.option('--user-table-name', type=str,
@@ -192,7 +192,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
             archive.logout()
 
 
-@click.command()
+@click.command(short_help='Query spectra-source rows by object ID.')
 @click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
               help='Input crossmatch results file (must contain Euclid object_id)')
 @click.option('--output', '-o', required=True, type=click.Path(),
@@ -312,7 +312,7 @@ def query_spectra(crossmatch: Optional[str], output: str,
             archive.logout()
 
 
-@click.command(name='query-zspe')
+@click.command(name='query-zspe', short_help='Query IDR SPE redshift candidates.')
 @click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
               help='Input table containing Euclid object_id values')
 @click.option('--output', '-o', required=True, type=click.Path(),
@@ -413,7 +413,72 @@ def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
             archive.logout()
 
 
-@click.command(name='query-cutana')
+@click.command(name='query-segmap', short_help='Query MER segmentation-map metadata.')
+@click.option('--input', '-i', required=True, type=click.Path(exists=True),
+              help='Input table containing SEGMENTATION_MAP_ID from crossmatch results')
+@click.option('--output', '-o', required=True, type=click.Path(),
+              help='Output segmentation-map metadata table')
+@click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
+              default='PDR', show_default=True, help='Archive environment')
+@click.option('--credentials', '-c', type=click.Path(exists=True),
+              help='Credentials file path')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def query_segmap(input: str, output: str, environment: str,
+                 credentials: Optional[str], verbose: bool):
+    """
+    Query MER segmentation-map metadata by SEGMENTATION_MAP_ID tile index.
+
+    The input table must contain SEGMENTATION_MAP_ID, object_id, and either
+    ra/dec or mer_ra/mer_dec.
+    SEGMENTATION_MAP_ID is converted locally using floor(value / 1_000_000).
+    """
+    import logging
+    from euclidkit.core.data_access import EuclidArchive
+    from euclidkit.utils.io import load_table
+
+    archive = None
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    try:
+        archive = EuclidArchive(environment=environment)
+
+        if credentials:
+            archive.login(credentials_file=credentials)
+        else:
+            archive.login()
+
+        input_table = load_table(input)
+
+        if verbose:
+            click.echo(f"Connected to {environment} environment")
+            click.echo(f"Input table: {input}")
+            click.echo(f"Input rows: {len(input_table)}")
+
+        results = archive.query_segmentation_maps(
+            source_table=input_table,
+            output_file=output,
+        )
+
+        click.echo(f"Segmentation map query completed: {len(results)} matches found")
+        click.echo(f"Input rows: {len(input_table)}")
+        click.echo(f"Valid tile rows: {getattr(archive, '_last_segmap_valid_tile_count', 'unknown')}")
+        if verbose:
+            table_name = getattr(archive, '_last_segmap_table_name', None)
+            if table_name:
+                click.echo(f"Segmentation map table: {table_name}")
+        click.echo(f"Results saved to: {output}")
+
+    except Exception as e:
+        click.echo(f"Error querying segmentation maps: {e}", err=True)
+        sys.exit(1)
+    finally:
+        if archive is not None:
+            archive.logout()
+
+
+@click.command(name='query-cutana', short_help='Build Cutana input from source tables.')
 @click.option('--sources', '-s', required=True, type=click.Path(exists=True),
               help='Input table with object_id or RA/Dec columns')
 @click.option('--output', '-o', required=True, type=click.Path(),
@@ -495,7 +560,7 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
         archive.logout()
 
 
-@click.command(name='upload-table')
+@click.command(name='upload-table', short_help='Upload a local table to Euclid TAP.')
 @click.option('--input', '-i', required=True, type=click.Path(exists=True),
               help='Local table file to upload (FITS, CSV, VOTable, etc.)')
 @click.option('--table-name', '-t', required=True,
@@ -558,7 +623,7 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
             archive.logout()
 
 
-@click.command()
+@click.command(short_help='Export spectra to Parquet or FITS.')
 @click.option('--spectra-table', '-s', required=True, type=click.Path(exists=True),
               help='Spectral sources table from query-spectra command')
 @click.option('--output-dir', '-o', required=True, type=click.Path(),
@@ -1010,7 +1075,63 @@ def _echo_raw_parquet_stats(stats, *, label: str) -> None:
         click.echo(f"failures={stats.failures_path}")
 
 
-@click.command(name='dithers-to-parquet')
+@click.command(name='compile-segmap', short_help='Cut out MER segmentation maps.')
+@click.option('--input', '-i', required=True, type=click.Path(exists=True),
+              help='query-segmap output table')
+@click.option('--output-dir', '-o', required=True, type=click.Path(),
+              help='Directory for segmentation-map cutout FITS files')
+@click.option('--size-arcsec', type=float, default=10.0, show_default=True,
+              help='Square cutout size in arcseconds')
+@click.option('--overwrite', is_flag=True,
+              help='Overwrite existing cutout FITS files')
+@click.option('--on-error', type=click.Choice(['fail', 'skip']), default='fail',
+              show_default=True, help='Fail on the first bad row/file or skip failures')
+@click.option('--progress', 'progress', is_flag=True, default=None,
+              help='Show segmentation-map processing progress')
+@click.option('--no-progress', 'progress', flag_value=False,
+              help='Disable segmentation-map processing progress')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def compile_segmap(input: str, output_dir: str, size_arcsec: float, overwrite: bool,
+                   on_error: str, progress: Optional[bool], verbose: bool):
+    """
+    Create local FITS cutouts from query-segmap output rows.
+
+    The command reads datalabs_path/file_name segmentation maps locally and
+    writes one raw-label 10 arcsec cutout per source row by default.
+    """
+    import logging
+    from euclidkit.core.segmap import compile_segmap_cutouts
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    try:
+        show_progress = bool(progress) if progress is not None else True
+        stats = compile_segmap_cutouts(
+            input_table=input,
+            output_dir=output_dir,
+            size_arcsec=size_arcsec,
+            overwrite=overwrite,
+            on_error=on_error,
+            show_progress=show_progress,
+        )
+
+        click.echo("Segmentation-map cutouts completed.")
+        click.echo(f"Requested rows: {stats.requested_rows}")
+        click.echo(f"Written cutouts: {stats.written_rows}")
+        click.echo(f"Skipped existing: {stats.skipped_existing_rows}")
+        click.echo(f"Failed rows: {stats.failed_rows}")
+        click.echo(f"Output files: {stats.output_file_count}")
+        click.echo(f"Output directory: {output_dir}")
+    except Exception as e:
+        click.echo(f"Error compiling segmentation-map cutouts: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command(
+    name='dithers-to-parquet',
+    short_help='Export dither spectra to Parquet.',
+)
 @click.option('--catalog-table', required=True, type=click.Path(exists=True),
               help='Catalog table with datalabs_path, file_name, and hdu_index')
 @click.option('--output-prefix', required=True, type=click.Path(),
@@ -1087,8 +1208,10 @@ def crossmatch_commands():
 crossmatch_commands.add_command(crossmatch, name='crossmatch')
 crossmatch_commands.add_command(query_spectra, name='query-spectra') 
 crossmatch_commands.add_command(query_zspe, name='query-zspe')
+crossmatch_commands.add_command(query_segmap, name='query-segmap')
 crossmatch_commands.add_command(query_cutana, name='query-cutana')
 crossmatch_commands.add_command(compile_spectra, name='compile-spectra')
+crossmatch_commands.add_command(compile_segmap, name='compile-segmap')
 crossmatch_commands.add_command(dithers_to_parquet_cli, name='dithers-to-parquet')
 
 

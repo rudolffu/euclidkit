@@ -16,8 +16,10 @@ from euclidkit.cli.crossmatch_cli import (
     crossmatch,
     query_spectra,
     query_zspe,
+    query_segmap,
     query_cutana,
     compile_spectra,
+    compile_segmap,
     dithers_to_parquet_cli,
     upload_table,
 )
@@ -47,7 +49,7 @@ def main(ctx, verbose: bool, config: Optional[str]):
         click.echo(f"euclidkit v{__version__} CLI initialized with config: {config}")
 
 
-@main.command()
+@main.command(short_help='Write a configuration template.')
 @click.option('--output', '-o', type=click.Path(), default=str(Path.home() / '.euclidkit' / 'euclidkit_config.yaml'),
               help='Output configuration file')
 @click.option('--template', '-t', type=click.Choice(['basic', 'advanced', 'pipeline']),
@@ -64,7 +66,7 @@ def init_config(output: str, template: str):
         sys.exit(1)
 
 
-@main.command()
+@main.command(short_help='Check installation and data access.')
 @click.option('--check-deps', is_flag=True, help='Check dependencies')
 @click.option('--check-data', is_flag=True, help='Check data access')
 @click.option('--check-desi', is_flag=True, help='Check DESI integration')
@@ -125,8 +127,10 @@ def pipeline(config_file: str, **kwargs):
 main.add_command(crossmatch)
 main.add_command(query_spectra, name='query-spectra')  
 main.add_command(query_zspe, name='query-zspe')
+main.add_command(query_segmap, name='query-segmap')
 main.add_command(query_cutana, name='query-cutana')
 main.add_command(compile_spectra, name='compile-spectra')
+main.add_command(compile_segmap, name='compile-segmap')
 main.add_command(dithers_to_parquet_cli, name='dithers-to-parquet')
 main.add_command(upload_table)
 main.add_command(cutouts)

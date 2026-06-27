@@ -79,6 +79,123 @@ class TestEuclidArchive:
             archive = EuclidArchive(environment=env)
             assert archive._get_spectra_source_table_name() == expected
 
+    def test_get_segmentation_map_table_name(self):
+        """Segmentation-map table should map to the expected release by environment."""
+        test_cases = [
+            ('PDR', 'q1.mer_segmentation_map'),
+            ('IDR', 'dr1.mer_segmentation_map'),
+            ('OTF', 'sedm.mer_segmentation_map'),
+            ('REG', 'sedm.mer_segmentation_map'),
+        ]
+
+        for env, expected in test_cases:
+            archive = EuclidArchive(environment=env)
+            assert archive._get_segmentation_map_table_name() == expected
+
+    def test_query_segmentation_maps_requires_segmentation_id(self):
+        """query-segmap should ask users to crossmatch when SEGMENTATION_MAP_ID is absent."""
+        archive = EuclidArchive(environment='PDR')
+        archive._logged_in = True
+
+        with pytest.raises(ValueError, match="Run euclidkit crossmatch first"):
+            archive.query_segmentation_maps(Table({
+                'object_id': [1],
+                'ra': [150.0],
+                'dec': [2.0],
+            }))
+
+    def test_query_segmentation_maps_requires_output_columns(self):
+        """query-segmap should validate object_id, ra, and dec input columns."""
+        archive = EuclidArchive(environment='PDR')
+        archive._logged_in = True
+
+        with pytest.raises(ValueError, match="object_id"):
+            archive.query_segmentation_maps(Table({
+                'SEGMENTATION_MAP_ID': [1234567890000],
+                'ra': [150.0],
+                'dec': [2.0],
+            }))
+
+    def test_query_segmentation_maps_builds_tile_join_and_saves(self, tmp_path):
+        """query-segmap should compute tile_index and join TAP_UPLOAD to mer_segmentation_map."""
+        archive = EuclidArchive(environment='IDR')
+        archive._logged_in = True
+        archive.euclid = Mock()
+        captured = {}
+
+        result_table = Table({
+            'object_id': [100001],
+            'segmentation_map_id': [1234567890000],
+            'ra': [150.0],
+            'dec': [2.0],
+            'datalabs_path': ['/data/euclid'],
+            'file_path': ['/data/euclid/mock.fits'],
+            'file_name': ['mock.fits'],
+            'crpix1': [1.0],
+            'crpix2': [2.0],
+            'crval1': [150.0],
+            'crval2': [2.0],
+            'seg_dec': [2.0],
+            'seg_ra': [150.0],
+            'data_set_release': ['dr1'],
+            'environment': ['IDR'],
+            'tile_index': [1234567],
+            'processing_mode': ['wide'],
+        })
+        job = Mock()
+        job.get_results.return_value = result_table
+
+        def fake_launch_job(query, upload_resource=None, upload_table_name=None):
+            captured['query'] = query
+            captured['upload_table'] = Table.read(upload_resource, format='votable')
+            captured['upload_table_name'] = upload_table_name
+            return job
+
+        archive.euclid.launch_job.side_effect = fake_launch_job
+        source = Table({
+            'OBJECT_ID': [100001, 100002, 100003, 100004],
+            'SEGMENTATION_MAP_ID': [1234567890000, None, '9876543210000', 'bad'],
+            'RA': [150.0, 151.0, 152.0, 153.0],
+            'DEC': [2.0, 2.1, 2.2, 2.3],
+        })
+
+        with patch('euclidkit.core.data_access.save_table') as mock_save:
+            result = archive.query_segmentation_maps(
+                source_table=source,
+                output_file=tmp_path / 'segmap.fits',
+            )
+
+        assert result is result_table
+        query = captured['query']
+        assert 'TAP_UPLOAD' in query
+        assert 'dr1.mer_segmentation_map' in query
+        assert 's.dec AS seg_dec' in query
+        assert 's.ra AS seg_ra' in query
+        assert 'u.tile_index = s.tile_index' in query
+        assert 'SUBSTRING' not in query
+        upload_table = captured['upload_table']
+        assert list(upload_table['tile_index']) == [1234567, 9876543]
+        assert archive._last_segmap_valid_tile_count == 2
+        mock_save.assert_called_once()
+
+    def test_query_segmentation_maps_accepts_mer_ra_dec_fallback(self):
+        """query-segmap should use mer_ra/mer_dec when ra/dec are absent."""
+        archive = EuclidArchive(environment='PDR')
+        source = Table({
+            'object_id': [100001],
+            'segmentation_map_id': [1234567890000],
+            'mer_ra': [150.0001],
+            'mer_dec': [2.0001],
+        })
+
+        upload_table = archive._prepare_segmentation_upload_table(source)
+
+        assert 'ra' in upload_table.colnames
+        assert 'dec' in upload_table.colnames
+        assert list(upload_table['ra']) == [150.0001]
+        assert list(upload_table['dec']) == [2.0001]
+        assert list(upload_table['tile_index']) == [1234567]
+
     def test_get_zspe_candidate_table_names(self):
         """SPE redshift candidate tables should resolve by object type and IDR field."""
         archive = EuclidArchive(environment='IDR')
