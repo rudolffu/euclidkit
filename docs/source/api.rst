@@ -70,10 +70,9 @@ Segmentation-map metadata lookup:
 ``query_segmentation_maps`` requires ``SEGMENTATION_MAP_ID``, ``object_id``,
 and source coordinates. It prefers ``ra``/``dec`` columns and falls back to
 ``mer_ra``/``mer_dec`` when the former are absent. It computes ``tile_index`` as
-``floor(SEGMENTATION_MAP_ID / 1_000_000)`` before joining to
-``q1.mer_segmentation_map`` for ``PDR``, ``dr1.mer_segmentation_map`` for
-``IDR``, and ``sedm.mer_segmentation_map`` for ``OTF``/``REG``. This result is
-the metadata input for local segmentation-map cutout compilation.
+``floor(SEGMENTATION_MAP_ID / 1_000_000)`` before joining to the environment
+segmentation-map table. See :doc:`segmentation_maps` for table mapping and CLI
+examples.
 
 Compile local segmentation-map cutouts from those query results:
 
@@ -90,7 +89,8 @@ Compile local segmentation-map cutouts from those query results:
 ``compile_segmap_cutouts`` opens local ``datalabs_path`` + ``file_name`` FITS
 files with memmap, writes one raw-label FITS cutout per input row, and returns
 ``SegmapCutoutStats`` with requested, written, failed, skipped-existing, and
-output-file counts.
+output-file counts. See :doc:`segmentation_maps` for required columns and output
+semantics.
 
 Spectra Parquet Export
 ~~~~~~~~~~~~~~~~~~~~~~

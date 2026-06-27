@@ -44,13 +44,7 @@ Query segmentation-map metadata from MER crossmatch results:
      --output segmentation_maps.fits \
      --environment IDR
 
-``query-segmap`` requires ``SEGMENTATION_MAP_ID``, ``object_id``, and source
-coordinates. It prefers ``ra``/``dec`` and falls back to ``mer_ra``/``mer_dec``.
-It computes ``tile_index = floor(SEGMENTATION_MAP_ID / 1_000_000)`` locally
-before joining to the archive ``mer_segmentation_map`` table. The result is
-the input for local ``compile-segmap`` cutout extraction.
-
-Compile 10 arcsec segmentation-map cutouts:
+The result is the input for local 10 arcsec segmentation-map cutouts:
 
 .. code-block:: bash
 
@@ -59,7 +53,9 @@ Compile 10 arcsec segmentation-map cutouts:
      --output-dir ./segmap_cutouts
 
 The command opens local ``datalabs_path`` + ``file_name`` FITS files from the
-``query-segmap`` table and writes one raw-label FITS cutout per source row.
+``query-segmap`` table and writes one raw-label FITS cutout per source row. See
+:doc:`segmentation_maps` for required columns, table mapping, and output
+semantics.
 
 Export local Datalabs spectra to raw Parquet parts. This is the default
 non-Datalink ``compile-spectra`` output; Datalink still writes FITS files.

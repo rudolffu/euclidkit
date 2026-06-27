@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=64.0", "setuptools-scm>=8.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -90,8 +90,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["euclidkit*"]
 
-[tool.setuptools.dynamic]
-version = {attr = "euclidkit.version.__version__"}
+[tool.setuptools_scm]
+tag_regex = "^v(?P<version>.+)$"
+fallback_version = "0.0.0"
 
 [tool.setuptools.package-data]
 euclidkit = [

@@ -234,7 +234,9 @@ locally, then joins to `q1.mer_segmentation_map` for PDR,
 Run `euclidkit crossmatch` first if your table does not yet contain
 `SEGMENTATION_MAP_ID`. `compile-segmap` reads local segmentation-map FITS files
 from `datalabs_path` + `file_name`, groups rows by tile file, and preserves the
-raw segmentation-label pixels in each cutout.
+raw segmentation-label pixels in each cutout. See the segmentation-map guide in
+the Sphinx docs for required columns, output filenames, and error-handling
+options.
 
 ### Building Cutana Input
 

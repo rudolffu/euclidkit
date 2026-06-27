@@ -145,25 +145,10 @@ Example:
      --output segmentation_maps.fits \
      --environment IDR
 
-Required input columns are matched case-insensitively:
-
-- ``SEGMENTATION_MAP_ID``
-- ``object_id``
-- ``ra`` and ``dec``; if absent, ``mer_ra`` and ``mer_dec`` are used instead
-
 ``query-segmap`` computes ``tile_index`` locally as
 ``floor(SEGMENTATION_MAP_ID / 1_000_000)`` and joins that value to the
-environment-specific segmentation-map table:
-
-- ``PDR``: ``q1.mer_segmentation_map``
-- ``IDR``: ``dr1.mer_segmentation_map``
-- ``OTF`` and ``REG``: ``sedm.mer_segmentation_map``
-
-Rows with null or non-numeric ``SEGMENTATION_MAP_ID`` values are excluded
-before upload. If the column is missing, run ``euclidkit crossmatch`` first to
-add ``segmentation_map_id``. ``--idr-field`` and ``--idr-deep-partition`` are
-not used by this command because ``mer_segmentation_map`` is not split by those
-MER catalogue partitions.
+environment-specific segmentation-map table. See :doc:`segmentation_maps` for
+required columns, environment mapping, and downstream cutout compilation.
 
 compile-segmap
 --------------
@@ -179,13 +164,9 @@ Example:
      --output-dir ./segmap_cutouts \
      --size-arcsec 10
 
-``compile-segmap`` combines ``datalabs_path`` and ``file_name`` from the input
-table to open each MER segmentation-map FITS file locally. Rows are grouped by
-file so each large tile is opened once with FITS memmap. The output is one FITS
-file per source row containing raw segmentation-label pixels, not a source-only
-mask. Cutouts are centered on source ``ra``/``dec`` columns, falling back to
-``mer_ra``/``mer_dec`` if needed. Boundary cutouts are padded with zero-valued
-pixels.
+``compile-segmap`` opens local ``datalabs_path`` + ``file_name`` FITS files and
+writes one raw-label FITS cutout per source row. See :doc:`segmentation_maps`
+for required columns, output semantics, and error-handling options.
 
 query-cutana
 ------------

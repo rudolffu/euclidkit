@@ -24,5 +24,6 @@ Contents
    environments
    quickstart
    cli
+   segmentation_maps
    spectra_compilation
    api
