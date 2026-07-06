@@ -822,7 +822,7 @@ class SpectrumCompiler:
         Compile spectra into a single FITS file.
         
         This is a convenience method for creating a single FITS file
-        containing all spectra, similar to the notebook cell 23 pattern.
+        containing all spectra.
         
         Parameters
         ----------

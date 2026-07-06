@@ -4,21 +4,37 @@ Spectra Compilation
 Typical workflow
 ----------------
 
-A common spectra workflow is:
+The spectra workflow starts with an input table that contains either Euclid
+spectral source IDs in an ``object_id`` column or sky coordinates. A MER
+crossmatch table is one valid input, but it is not required.
+
+If your table already contains an ``object_id`` column whose values correspond
+to ``spectra_source.source_id``, query by object ID:
 
 .. code-block:: bash
 
-   euclidkit crossmatch \
-     --input my_sources.fits \
-     --output crossmatch_results.fits \
+   euclidkit query-spectra \
+     --crossmatch my_spectral_ids.fits \
+     --output spectra_sources.fits \
+     --match-mode object-id \
      --environment IDR \
      --idr-field WIDE
 
+If your table only has positions, query by coordinates:
+
+.. code-block:: bash
+
    euclidkit query-spectra \
-     --crossmatch crossmatch_results.fits \
+     --crossmatch my_coordinates.fits \
      --output spectra_sources.fits \
+     --match-mode spatial \
+     --radius 1.0 \
      --environment IDR \
      --idr-field WIDE
+
+Then compile the returned spectra-source catalogue:
+
+.. code-block:: bash
 
    euclidkit compile-spectra \
      --spectra-table spectra_sources.fits \
@@ -26,30 +42,45 @@ A common spectra workflow is:
      --prefix raw_spectra \
      -L RGS
 
-``query-spectra`` is the bridge between catalogue matching and spectrum file
-access. It reads Euclid ``object_id`` values from the crossmatch table, joins
-them to the archive spectra-source table through ``source_id``, and writes a
-spectra-source catalogue with the local Datalabs file information needed by
-``compile-spectra``. If you do not already have this spectra-source catalogue,
-generate it with the `query-spectra CLI
+``query-spectra`` is the bridge between an ID/coordinate table and spectrum
+file access. It queries the archive spectra-source table by either an uploaded
+``object_id`` key joined to ``spectra_source.source_id`` or by matching input
+coordinates to ``ra_obj``/``dec_obj``, then writes a spectra-source catalogue
+with the local Datalabs file information needed by ``compile-spectra``. If you
+do not already have this spectra-source catalogue, generate it with the
+`query-spectra CLI
 <https://euclidkit.readthedocs.io/en/latest/cli.html#query-spectra>`__ before
 running ``compile-spectra``.
 
 ``query-spectra`` matching
 --------------------------
 
-``query-spectra`` matches by object ID only. It does not perform positional
-matching with RA/Dec.
+``query-spectra`` supports ``--match-mode auto|object-id|spatial``. Auto mode
+uses object-ID matching when ``object_id`` or ``object_id_euclid`` exists, and
+otherwise uses spatial matching when RA/Dec columns can be resolved.
 
-- The input table must contain ``object_id``. If that column is absent,
-  ``object_id_euclid`` is accepted as a fallback.
-- Unique IDs are uploaded as a temporary ``object_id`` column.
-- The archive query joins ``spectra_source.source_id = uploaded.object_id``.
+- Object-ID mode uploads unique IDs as a temporary ``object_id`` column and
+  joins ``spectra_source.source_id = uploaded.object_id``.
+- If your input column is named ``source_id`` rather than ``object_id``, rename
+  or copy it to ``object_id`` before running ``query-spectra``; in this context
+  ``object_id`` is the uploaded key used to join against
+  ``spectra_source.source_id``.
+- Spatial mode matches input coordinates to ``spectra_source.ra_obj`` and
+  ``spectra_source.dec_obj`` within ``--radius`` arcsec, default ``1.0``.
+- Spatial mode keeps only the nearest spectra-source row per input row.
+- Spatial coordinate columns are resolved using exact ``--ra-col``/``--dec-col``
+  names first, then case-insensitive matches and common aliases such as
+  ``RA``/``DEC``, ``right_ascension``/``declination``,
+  ``ra_deg``/``dec_deg``, ``RAJ2000``/``DEJ2000``, and
+  ``ra_euclid``/``dec_euclid``.
 - Rows without ``datalabs_path`` are excluded from the output.
 
 The output contains the columns needed by local and Datalink compilation,
 including ``source_id``, ``object_id``, ``ra_obj``, ``dec_obj``,
-``datalabs_path``, ``file_name``, and ``hdu_index``.
+``datalabs_path``, ``file_name``, and ``hdu_index``. Spatial mode also includes
+``input_row_id``, ``input_ra``, ``input_dec``, and ``separation_arcsec``; its
+``object_id`` is set from the matched ``source_id`` so the result can be passed
+directly to ``compile-spectra``.
 
 Default Parquet mode (local Datalabs FITS paths)
 ------------------------------------------------
@@ -59,12 +90,13 @@ from the spectra-source catalogue, combines ``datalabs_path`` and ``file_name``
 to locate the FITS file, opens the requested ``hdu_index``, and writes the raw
 spectrum arrays to chunked Parquet files. This is the default output mode.
 
-If you do not already have ``spectra_sources.fits``, create it first:
+If you do not already have ``spectra_sources.fits``, create it first from an
+ID table or coordinate table:
 
 .. code-block:: bash
 
    euclidkit query-spectra \
-     --crossmatch crossmatch_results.fits \
+     --crossmatch my_spectral_ids_or_coordinates.fits \
      --output spectra_sources.fits \
      --environment IDR \
      --idr-field WIDE

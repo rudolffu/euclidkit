@@ -192,15 +192,23 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
             archive.logout()
 
 
-@click.command(short_help='Query spectra-source rows by object ID.')
+@click.command(short_help='Query spectra-source rows by object ID or position.')
 @click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
-              help='Input crossmatch results file (must contain Euclid object_id)')
+              help='Input table with Euclid object_id/object_id_euclid or coordinates')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output spectral sources file')
 @click.option('--combine-output', type=click.Path(),
               help='Output FITS file for combined spectra (auto-generates after query)')
 @click.option('--max-spectra', type=int,
               help='Maximum number of spectra to include in combined output')
+@click.option('--radius', '-r', type=float, default=1.0, show_default=True,
+              help='Search radius in arcseconds for spatial matching')
+@click.option('--ra-col', type=str, default='ra', show_default=True,
+              help='RA column name for spatial matching')
+@click.option('--dec-col', type=str, default='dec', show_default=True,
+              help='Dec column name for spatial matching')
+@click.option('--match-mode', type=click.Choice(['auto', 'object-id', 'spatial']), default='auto',
+              help='Matching mode: auto (default), object-id, or spatial')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
 @click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
@@ -211,18 +219,18 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def query_spectra(crossmatch: Optional[str], output: str,
                   combine_output: Optional[str], max_spectra: Optional[int],
+                  radius: float, ra_col: str, dec_col: str, match_mode: str,
                   environment: str, idr_field: str, credentials: Optional[str], verbose: bool):
     """
-    Query spectral sources for objects from crossmatch or object ID list.
+    Query spectral sources for objects from an object-ID or coordinate table.
     
     This command queries the environment-specific spectra_source table to find available
-    spectra for objects identified in crossmatching or provided as a list.
+    spectra for objects identified by Euclid object ID or sky position.
 
     Credits: Kristin Anett Remmelgas and Héctor Cánovas Cabrera.
     
     If --combine-output is provided, automatically combines the found spectra
-    into a single FITS file after querying, similar to cell 23 in the 
-    Spectra_visualization_catglobe.ipynb notebook.
+    into a single FITS file after querying.
     """
     import logging
     from euclidkit.core.data_access import EuclidArchive
@@ -252,6 +260,9 @@ def query_spectra(crossmatch: Optional[str], output: str,
             click.echo(f"Connected to {environment} environment")
             if environment == 'IDR':
                 click.echo(f"IDR field: {idr_field.upper()}")
+            click.echo(f"Match mode: {match_mode}")
+            if match_mode == 'spatial':
+                click.echo(f"Search radius: {radius} arcsec")
         
         # Load crossmatch table
         crossmatch_table = load_table(crossmatch)
@@ -263,6 +274,10 @@ def query_spectra(crossmatch: Optional[str], output: str,
             crossmatch_table=crossmatch_table,
             output_file=output,
             idr_field=idr_field.upper() if environment == 'IDR' else None,
+            match_mode=match_mode,
+            radius=radius,
+            ra_col=ra_col,
+            dec_col=dec_col,
         )
         
         # Report results
@@ -270,8 +285,12 @@ def query_spectra(crossmatch: Optional[str], output: str,
         click.echo(f"Results saved to: {output}")
         
         if len(results) > 0:
-            unique_objects = len(set(results['object_id']))
-            click.echo(f"Unique objects with spectra: {unique_objects}")
+            if 'object_id' in results.colnames:
+                unique_objects = len(set(results['object_id']))
+                click.echo(f"Unique objects with spectra: {unique_objects}")
+            if 'input_row_id' in results.colnames:
+                unique_inputs = len(set(results['input_row_id']))
+                click.echo(f"Unique input rows with spectra: {unique_inputs}")
             
             # Show instrument breakdown
             if 'instrument_name' in results.colnames:

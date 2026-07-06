@@ -119,33 +119,62 @@ Matching mode recommendation:
 query-spectra
 -------------
 
-Query spectra-source rows for objects in a crossmatch table. The match is by
-Euclid object ID, not by sky position.
+Query spectra-source rows for objects in an object-ID or coordinate table.
+``--match-mode`` accepts the same values as ``crossmatch``:
+``auto`` (default), ``object-id``, or ``spatial``.
 
 .. code-block:: bash
 
    euclidkit query-spectra \
-     --crossmatch crossmatch_results.fits \
+     --crossmatch my_spectral_ids.fits \
      --output spectra_sources.fits \
+     --environment IDR \
+     --idr-field WIDE
+
+Spatial example:
+
+.. code-block:: bash
+
+   euclidkit query-spectra \
+     --crossmatch my_coordinates.fits \
+     --output spectra_sources.fits \
+     --match-mode spatial \
+     --radius 1.0 \
+     --ra-col ra \
+     --dec-col dec \
      --environment IDR \
      --idr-field WIDE
 
 Matching behavior:
 
-- The input ``--crossmatch`` table must contain ``object_id``. If not,
-  ``object_id_euclid`` is accepted as a fallback.
-- Unique object IDs are uploaded as a temporary ``object_id`` column.
-- The archive query joins ``spectra_source.source_id = uploaded.object_id``.
-- ``ra``/``dec`` columns are not used for matching.
+- ``auto`` uses object-ID mode when ``object_id`` or ``object_id_euclid`` is
+  present; otherwise it uses spatial mode when RA/Dec columns can be resolved.
+- Object-ID mode uploads unique IDs as a temporary ``object_id`` column and
+  joins ``spectra_source.source_id = uploaded.object_id``.
+- A MER crossmatch table is not required. Any local table with the needed
+  spectra-source IDs or coordinates can be used. If your IDs are in a
+  ``source_id`` column, rename or copy that column to ``object_id`` before
+  running ``query-spectra``.
+- Spatial mode matches ``ra_obj``/``dec_obj`` to the input coordinates within
+  ``--radius`` arcsec and keeps only the nearest spectra-source row per input
+  row.
+- Spatial coordinate columns are resolved using exact ``--ra-col``/``--dec-col``
+  names first, then case-insensitive matches and common aliases such as
+  ``RA``/``DEC``, ``right_ascension``/``declination``,
+  ``ra_deg``/``dec_deg``, ``RAJ2000``/``DEJ2000``, and Euclid-specific
+  ``ra_euclid``/``dec_euclid`` names.
 - Rows with missing ``datalabs_path`` are excluded because local Datalabs
   compilation needs a file path.
 
 Output columns include ``source_id``, ``ra_obj``, ``dec_obj``,
 ``datalabs_path``, ``file_name``, ``hdu_index``, and the uploaded
-``object_id``. For IDR, ``--idr-field WIDE`` queries
-``catalogue.spectra_source_wide`` and ``--idr-field DEEP`` queries
-``catalogue.spectra_source_deep``. Other environments use the corresponding
-``spectra_source`` table for the selected release.
+``object_id``. Spatial mode also includes ``input_row_id``, ``input_ra``,
+``input_dec``, and ``separation_arcsec``; its ``object_id`` is set from the
+matched ``source_id`` for downstream ``compile-spectra`` compatibility. For
+IDR, ``--idr-field WIDE`` queries ``catalogue.spectra_source_wide`` and
+``--idr-field DEEP`` queries ``catalogue.spectra_source_deep``. Other
+environments use the corresponding ``spectra_source`` table for the selected
+release.
 
 The resulting table is the usual input to ``compile-spectra``. See
 :doc:`spectra_compilation` for the full spectra workflow.

@@ -16,5 +16,5 @@ def test_top_level_help_uses_complete_command_summaries():
     assert 'compile-spectra     Export spectra to Parquet or FITS.' in result.output
     assert 'crossmatch          Crossmatch sources with Euclid MER.' in result.output
     assert 'query-segmap        Query MER segmentation-map metadata.' in result.output
-    assert 'query-spectra       Query spectra-source rows by object ID.' in result.output
+    assert 'query-spectra       Query spectra-source rows by object ID or position.' in result.output
     assert 'select-footprint    Filter a catalog by Euclid footprint.' in result.output

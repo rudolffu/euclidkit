@@ -555,6 +555,11 @@ class TestQuerySpectraCLI:
                     assert result.exit_code == 0
                     assert "Spectral query completed: 2 spectra found" in result.output
                     assert "Unique objects with spectra: 2" in result.output
+                    kwargs = mock_archive.query_spectra_sources.call_args.kwargs
+                    assert kwargs['match_mode'] == 'auto'
+                    assert kwargs['radius'] == 1.0
+                    assert kwargs['ra_col'] == 'ra'
+                    assert kwargs['dec_col'] == 'dec'
                     
         finally:
             os.unlink(crossmatch_file)
@@ -633,6 +638,83 @@ class TestQuerySpectraCLI:
                 os.unlink(crossmatch_file)
                 if os.path.exists(output_file.name):
                     os.unlink(output_file.name)
+
+    def test_query_spectra_spatial_options_forwarded(self):
+        """Spatial query-spectra options should be forwarded to the archive API."""
+        crossmatch_file = self.create_temp_crossmatch_file()
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+
+                    mock_spectra = Table({
+                        'input_row_id': [0, 1],
+                        'object_id': [100001, 100002],
+                        'source_id': [100001, 100002],
+                        'separation_arcsec': [0.2, 0.4],
+                    })
+                    mock_archive.query_spectra_sources.return_value = mock_spectra
+
+                    with patch('euclidkit.utils.io.load_table', return_value=self.crossmatch_table):
+                        result = self.runner.invoke(query_spectra, [
+                            '--crossmatch', crossmatch_file,
+                            '--output', output_file.name,
+                            '--match-mode', 'spatial',
+                            '--radius', '1.5',
+                            '--ra-col', 'ra',
+                            '--dec-col', 'dec',
+                        ])
+
+                    assert result.exit_code == 0
+                    assert "Unique input rows with spectra: 2" in result.output
+                    kwargs = mock_archive.query_spectra_sources.call_args.kwargs
+                    assert kwargs['match_mode'] == 'spatial'
+                    assert kwargs['radius'] == 1.5
+                    assert kwargs['ra_col'] == 'ra'
+                    assert kwargs['dec_col'] == 'dec'
+        finally:
+            os.unlink(crossmatch_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
+
+    def test_query_spectra_spatial_defaults_allow_uppercase_radec_table(self):
+        """Spatial query-spectra should keep default coord names for core alias resolution."""
+        crossmatch_file = self.create_temp_crossmatch_file()
+        uppercase_coord_table = Table({
+            'RA': [150.0, 151.0],
+            'DEC': [2.0, 2.1],
+        })
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as output_file:
+                with patch('euclidkit.core.data_access.EuclidArchive') as mock_archive_class:
+                    mock_archive = Mock()
+                    mock_archive_class.return_value = mock_archive
+
+                    mock_spectra = Table({
+                        'input_row_id': [0, 1],
+                        'object_id': [100001, 100002],
+                        'source_id': [100001, 100002],
+                        'separation_arcsec': [0.2, 0.4],
+                    })
+                    mock_archive.query_spectra_sources.return_value = mock_spectra
+
+                    with patch('euclidkit.utils.io.load_table', return_value=uppercase_coord_table):
+                        result = self.runner.invoke(query_spectra, [
+                            '--crossmatch', crossmatch_file,
+                            '--output', output_file.name,
+                            '--match-mode', 'spatial',
+                        ])
+
+                    assert result.exit_code == 0
+                    kwargs = mock_archive.query_spectra_sources.call_args.kwargs
+                    assert kwargs['match_mode'] == 'spatial'
+                    assert kwargs['ra_col'] == 'ra'
+                    assert kwargs['dec_col'] == 'dec'
+        finally:
+            os.unlink(crossmatch_file)
+            if os.path.exists(output_file.name):
+                os.unlink(output_file.name)
 
 
 class TestQueryZspeCLI:

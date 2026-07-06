@@ -2280,6 +2280,140 @@ class EuclidArchive:
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
 
+    def _query_spectra_spatial_batch(
+        self,
+        batch: Table,
+        radius_deg: float,
+        idr_field: Optional[str] = None,
+    ) -> Table:
+        """Query spectra for a batch of input coordinates."""
+        with tempfile.NamedTemporaryFile(suffix='.vot', delete=False) as tmp_file:
+            batch.write(tmp_file.name, format='votable', overwrite=True)
+            tmp_name = tmp_file.name
+
+        try:
+            upload_name = f"user_spectra_spatial_{np.random.randint(10000, 99999)}"
+            spectra_source_table = self._get_spectra_source_table_name(idr_field=idr_field)
+
+            query = f"""
+            SELECT
+                u.input_row_id,
+                u.input_ra,
+                u.input_dec,
+                s.source_id,
+                s.source_id AS object_id,
+                s.ra_obj,
+                s.dec_obj,
+                s.datalabs_path,
+                s.file_name,
+                s.hdu_index,
+                DISTANCE(u.input_ra, u.input_dec, s.ra_obj, s.dec_obj) AS separation_deg
+            FROM TAP_UPLOAD.{upload_name} AS u
+            JOIN {spectra_source_table} AS s
+            ON DISTANCE(u.input_ra, u.input_dec, s.ra_obj, s.dec_obj) <= {radius_deg}
+            WHERE s.datalabs_path IS NOT NULL
+            """
+
+            if len(batch) < 2000:
+                job = self.euclid.launch_job(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+            else:
+                job = self.euclid.launch_job_async(
+                    query,
+                    upload_resource=tmp_name,
+                    upload_table_name=upload_name,
+                )
+
+            result = job.get_results()
+            return result if result is not None else Table()
+
+        except Exception as e:
+            logger.error(f"Error querying spectra spatial batch: {e}")
+            return Table()
+
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+
+    def _select_nearest_spectra_matches(self, result: Table) -> Table:
+        """Keep the nearest spectra-source match for each uploaded input row."""
+        if result is None or len(result) == 0:
+            return Table()
+        if 'input_row_id' not in result.colnames:
+            return result
+
+        table = result.copy()
+        if 'separation_arcsec' not in table.colnames and 'separation_deg' in table.colnames:
+            table['separation_arcsec'] = np.asarray(table['separation_deg'], dtype=float) * 3600.0
+
+        sort_cols = ['input_row_id']
+        if 'separation_arcsec' in table.colnames:
+            sort_cols.append('separation_arcsec')
+        table.sort(sort_cols)
+
+        keep_indices = []
+        seen = set()
+        for idx, row in enumerate(table):
+            key = self._value_key(row['input_row_id'])
+            if key in seen:
+                continue
+            seen.add(key)
+            keep_indices.append(idx)
+
+        return table[keep_indices] if keep_indices else Table()
+
+    def _resolve_spectra_spatial_columns(
+        self,
+        table: Table,
+        ra_col: str = "ra",
+        dec_col: str = "dec",
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Resolve spectra-query coordinate columns using common aliases."""
+        ra_aliases = [
+            ra_col,
+            "ra",
+            "right_ascension",
+            "RA",
+            "ra_deg",
+            "RAJ2000",
+            "right_ascension_euclid",
+            "ra_euclid",
+        ]
+        dec_aliases = [
+            dec_col,
+            "dec",
+            "declination",
+            "DEC",
+            "dec_deg",
+            "DEJ2000",
+            "declination_euclid",
+            "dec_euclid",
+        ]
+
+        def _resolve(requested: str, aliases: List[str]) -> Optional[str]:
+            if requested in table.colnames:
+                return requested
+
+            lower_lookup = {}
+            for col in table.colnames:
+                lower_lookup.setdefault(str(col).lower(), col)
+            requested_match = lower_lookup.get(str(requested).lower())
+            if requested_match is not None:
+                return requested_match
+
+            for alias in aliases:
+                if alias in table.colnames:
+                    return alias
+                match = lower_lookup.get(str(alias).lower())
+                if match is not None:
+                    return match
+            return None
+
+        return _resolve(ra_col, ra_aliases), _resolve(dec_col, dec_aliases)
+
     def _get_zspe_candidate_table_names(
         self,
         object_type: str = "qso",
@@ -2792,6 +2926,10 @@ class EuclidArchive:
         crossmatch_table: Optional[Table] = None,
         output_file: Optional[Union[str, Path]] = None,
         idr_field: Optional[str] = None,
+        match_mode: str = "auto",
+        radius: float = 1.0,
+        ra_col: str = "ra",
+        dec_col: str = "dec",
     ) -> Table:
         """
         Query spectral sources from Euclid archive.
@@ -2805,6 +2943,12 @@ class EuclidArchive:
         idr_field : {'WIDE', 'DEEP'}, optional
             IDR field selector. Used only when environment='IDR'. Defaults to
             'WIDE' if not provided.
+        match_mode : {'auto', 'object-id', 'spatial'}, default 'auto'
+            Match by object ID, sky position, or auto-detect from input columns.
+        radius : float, default 1.0
+            Spatial matching radius in arcseconds.
+        ra_col, dec_col : str, default 'ra', 'dec'
+            Coordinate columns used for spatial matching.
             
         Returns
         -------
@@ -2815,39 +2959,99 @@ class EuclidArchive:
             logger.warning("Not logged in - attempting login with default credentials")
             self.login()
         
-        # Determine object IDs to query
         if crossmatch_table is None:
-            raise ValueError("Must provide crossmatch_table with 'object_id' or 'object_id_euclid'")
-        # Accept either object_id or object_id_euclid
-        if 'object_id' in crossmatch_table.colnames:
-            object_ids = list(set([int(x) for x in crossmatch_table['object_id']]))
-        elif 'object_id_euclid' in crossmatch_table.colnames:
-            object_ids = list(set([int(x) for x in crossmatch_table['object_id_euclid']]))
+            raise ValueError(
+                "Must provide crossmatch_table with 'object_id'/'object_id_euclid' "
+                "or coordinate columns for spatial matching"
+            )
+        if radius <= 0:
+            raise ValueError("radius must be positive")
+
+        normalized_mode = str(match_mode).lower()
+        if normalized_mode not in {'auto', 'object-id', 'spatial'}:
+            raise ValueError("match_mode must be one of: auto, object-id, spatial")
+
+        has_object_id = 'object_id' in crossmatch_table.colnames
+        has_object_id_alt = 'object_id_euclid' in crossmatch_table.colnames
+        resolved_ra_col, resolved_dec_col = self._resolve_spectra_spatial_columns(
+            crossmatch_table,
+            ra_col=ra_col,
+            dec_col=dec_col,
+        )
+        has_radec = resolved_ra_col is not None and resolved_dec_col is not None
+
+        if normalized_mode == 'auto':
+            if has_object_id or has_object_id_alt:
+                effective_mode = 'object-id'
+            elif has_radec:
+                effective_mode = 'spatial'
+            else:
+                raise ValueError(
+                    "crossmatch_table must contain 'object_id'/'object_id_euclid' "
+                    f"or spatial columns matching '{ra_col}'/'{dec_col}' or common RA/Dec aliases"
+                )
         else:
-            raise ValueError("crossmatch_table must contain 'object_id' or 'object_id_euclid'")
-        
-        logger.info(f"Querying spectra for {len(object_ids)} unique objects")
-        
-        # Create user table with object IDs
-        user_table = Table()
-        user_table['object_id'] = object_ids
-        
-        # Query in batches to avoid query limits  
+            effective_mode = normalized_mode
+
+        if effective_mode == 'object-id':
+            if has_object_id:
+                object_ids = list(set([int(x) for x in crossmatch_table['object_id']]))
+            elif has_object_id_alt:
+                object_ids = list(set([int(x) for x in crossmatch_table['object_id_euclid']]))
+            else:
+                raise ValueError("crossmatch_table must contain 'object_id' or 'object_id_euclid'")
+
+            logger.info(f"Querying spectra for {len(object_ids)} unique objects")
+
+            user_table = Table()
+            user_table['object_id'] = object_ids
+        else:
+            if not has_radec:
+                missing = []
+                if resolved_ra_col is None:
+                    missing.append(ra_col)
+                if resolved_dec_col is None:
+                    missing.append(dec_col)
+                raise ValueError(
+                    "crossmatch_table missing spatial column(s): "
+                    f"{missing}; expected requested columns or common RA/Dec aliases"
+                )
+
+            logger.info(
+                "Querying spectra spatially for %d input rows with radius %.3f arcsec",
+                len(crossmatch_table),
+                radius,
+            )
+
+            user_table = Table()
+            user_table['input_row_id'] = np.arange(len(crossmatch_table), dtype=np.int64)
+            user_table['input_ra'] = np.asarray(crossmatch_table[resolved_ra_col], dtype=float)
+            user_table['input_dec'] = np.asarray(crossmatch_table[resolved_dec_col], dtype=float)
+
         batch_size = 1000
         all_results = []
-        
+
         for i in range(0, len(user_table), batch_size):
             batch = user_table[i:i+batch_size]
             logger.info(f"Querying batch {i//batch_size + 1}/{(len(user_table)-1)//batch_size + 1}")
-            
-            batch_result = self._query_spectra_batch(batch, idr_field=idr_field)
-            
+
+            if effective_mode == 'object-id':
+                batch_result = self._query_spectra_batch(batch, idr_field=idr_field)
+            else:
+                batch_result = self._query_spectra_spatial_batch(
+                    batch,
+                    radius_deg=radius / 3600.0,
+                    idr_field=idr_field,
+                )
+
             if len(batch_result) > 0:
                 all_results.append(batch_result)
                 logger.info(f"Found {len(batch_result)} spectra in batch")
         
         if all_results:
-            final_result = Table(np.concatenate([r for r in all_results]))
+            final_result = vstack(all_results, metadata_conflicts="silent")
+            if effective_mode == 'spatial':
+                final_result = self._select_nearest_spectra_matches(final_result)
         else:
             logger.warning("No spectra found")
             return Table()
@@ -2908,9 +3112,8 @@ class EuclidArchive:
         """
         Combine individual spectra into a single FITS file.
         
-        This function replicates the functionality from cell 23 of the 
-        Spectra_visualization_catglobe.ipynb notebook, using the 
-        existing SpectrumCompiler infrastructure.
+        This function uses the existing SpectrumCompiler infrastructure to
+        create a single combined FITS output.
         
         Parameters
         ----------

@@ -194,20 +194,24 @@ euclidkit upload-table \
 ### Querying Spectra
 
 ```bash
-# Query spectra-source rows from crossmatch results.
-# Matching uses object_id, not sky position.
+# Query spectra-source rows from an ID or coordinate table.
+# Auto mode uses object_id when present, otherwise spatial RA/Dec matching.
 euclidkit query-spectra \
-    --crossmatch crossmatch_results.fits \
+    --crossmatch my_spectral_ids_or_coordinates.fits \
     --output spectra_sources.fits \
     --environment IDR \
     --idr-field WIDE \
     --verbose
 ```
 
-`query-spectra` reads `object_id` (or `object_id_euclid`) from the input table
-and joins `spectra_source.source_id = object_id`. The output table is the usual
-input to `compile-spectra`; see the Sphinx spectra compilation guide for the
-full Datalabs and Datalink workflow details.
+`query-spectra` supports `--match-mode auto|object-id|spatial`. Object-ID mode
+joins `spectra_source.source_id = object_id`; spatial mode matches input
+coordinates to `ra_obj`/`dec_obj` with nearest-only output. Spatial mode accepts
+common RA/Dec aliases such as `RA`/`DEC`, `right_ascension`/`declination`, and
+`ra_deg`/`dec_deg` case-insensitively. A MER crossmatch table is optional; any
+local table with the needed spectra-source IDs or coordinates can be used. The
+result is the usual input to `compile-spectra`; see the Sphinx spectra
+compilation guide for the full Datalabs and Datalink workflow details.
 
 ### Querying Segmentation Maps
 

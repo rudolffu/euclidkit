@@ -548,7 +548,7 @@ class TestEuclidArchive:
             'file_path': ['/path/1.fits', '/path/2.fits']
         })
         
-        self.mock_client.query_object_async.return_value.get_results.return_value = mock_spectra
+        self.mock_client.launch_job.return_value.get_results.return_value = mock_spectra
         
         result = self.archive.query_spectra_sources(
             crossmatch_table=self.sample_crossmatch_result
@@ -594,19 +594,208 @@ class TestEuclidArchive:
             
         try:
             mock_spectra = Table({'object_id': [100001], 'spectrum_id': ['spec_1']})
-            self.mock_client.query_object_async.return_value.get_results.return_value = mock_spectra
+            self.mock_client.launch_job.return_value.get_results.return_value = mock_spectra
             
-            with patch('astropy.table.Table.write') as mock_write:
+            with patch('euclidkit.core.data_access.save_table') as mock_save:
                 cross_tab = Table({'object_id': [100001]})
                 result = self.archive.query_spectra_sources(
                     crossmatch_table=cross_tab,
                     output_file=output_path
                 )
                 
-                mock_write.assert_called_once()
+                mock_save.assert_called_once()
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
+
+    def test_query_spectra_sources_auto_uses_spatial_without_object_id(self):
+        """Auto mode should use spatial matching when only coordinates are available."""
+        self.archive._logged_in = True
+        coord_table = Table({
+            'ra': [150.0, 151.0],
+            'dec': [2.0, 2.1],
+        })
+        spatial_result = Table({
+            'input_row_id': [0, 1],
+            'source_id': [100001, 100002],
+            'object_id': [100001, 100002],
+            'ra_obj': [150.0, 151.0],
+            'dec_obj': [2.0, 2.1],
+            'separation_deg': [0.0, 0.0],
+        })
+
+        with patch.object(self.archive, '_query_spectra_batch') as mock_oid:
+            with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+                result = self.archive.query_spectra_sources(crossmatch_table=coord_table)
+
+        mock_oid.assert_not_called()
+        mock_spatial.assert_called_once()
+        assert len(result) == 2
+        assert 'separation_arcsec' in result.colnames
+
+    def test_query_spectra_sources_spatial_resolves_uppercase_radec(self):
+        """Spatial mode should resolve uppercase RA/DEC without explicit CLI options."""
+        self.archive._logged_in = True
+        coord_table = Table({
+            'RA': [150.0, 151.0],
+            'DEC': [2.0, 2.1],
+        })
+        spatial_result = Table({
+            'input_row_id': [0, 1],
+            'source_id': [100001, 100002],
+            'object_id': [100001, 100002],
+            'separation_deg': [0.0, 0.0],
+        })
+
+        with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+            result = self.archive.query_spectra_sources(
+                crossmatch_table=coord_table,
+                match_mode='spatial',
+            )
+
+        mock_spatial.assert_called_once()
+        uploaded = mock_spatial.call_args.args[0]
+        assert list(uploaded['input_ra']) == [150.0, 151.0]
+        assert list(uploaded['input_dec']) == [2.0, 2.1]
+        assert len(result) == 2
+
+    def test_query_spectra_sources_auto_resolves_uppercase_radec(self):
+        """Auto mode should choose spatial matching for uppercase RA/DEC tables."""
+        self.archive._logged_in = True
+        coord_table = Table({
+            'RA': [150.0],
+            'DEC': [2.0],
+        })
+        spatial_result = Table({
+            'input_row_id': [0],
+            'source_id': [100001],
+            'object_id': [100001],
+            'separation_deg': [0.0],
+        })
+
+        with patch.object(self.archive, '_query_spectra_batch') as mock_oid:
+            with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+                self.archive.query_spectra_sources(crossmatch_table=coord_table)
+
+        mock_oid.assert_not_called()
+        mock_spatial.assert_called_once()
+
+    def test_query_spectra_sources_spatial_resolves_common_aliases(self):
+        """Spatial mode should resolve common coordinate aliases case-insensitively."""
+        self.archive._logged_in = True
+        coord_table = Table({
+            'right_ascension': [150.0],
+            'declination': [2.0],
+        })
+        spatial_result = Table({
+            'input_row_id': [0],
+            'source_id': [100001],
+            'object_id': [100001],
+            'separation_deg': [0.0],
+        })
+
+        with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+            self.archive.query_spectra_sources(
+                crossmatch_table=coord_table,
+                match_mode='spatial',
+            )
+
+        uploaded = mock_spatial.call_args.args[0]
+        assert list(uploaded['input_ra']) == [150.0]
+        assert list(uploaded['input_dec']) == [2.0]
+
+    def test_query_spectra_sources_spatial_exact_columns_win(self):
+        """Exact requested coordinate column names should win over aliases."""
+        self.archive._logged_in = True
+        coord_table = Table({
+            'ra': [150.0],
+            'dec': [2.0],
+            'RA': [250.0],
+            'DEC': [12.0],
+        })
+        spatial_result = Table({
+            'input_row_id': [0],
+            'source_id': [100001],
+            'object_id': [100001],
+            'separation_deg': [0.0],
+        })
+
+        with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+            self.archive.query_spectra_sources(
+                crossmatch_table=coord_table,
+                match_mode='spatial',
+            )
+
+        uploaded = mock_spatial.call_args.args[0]
+        assert list(uploaded['input_ra']) == [150.0]
+        assert list(uploaded['input_dec']) == [2.0]
+
+    def test_query_spectra_sources_object_id_mode_requires_object_id(self):
+        """Forced object-id mode should not silently fall back to spatial matching."""
+        self.archive._logged_in = True
+        coord_table = Table({'ra': [150.0], 'dec': [2.0]})
+
+        with pytest.raises(ValueError, match="object_id"):
+            self.archive.query_spectra_sources(
+                crossmatch_table=coord_table,
+                match_mode='object-id',
+            )
+
+    def test_query_spectra_sources_spatial_requires_radec(self):
+        """Spatial mode should validate requested coordinate columns."""
+        self.archive._logged_in = True
+        bad_table = Table({'object_name': ['a']})
+
+        with pytest.raises(ValueError, match="common RA/Dec aliases"):
+            self.archive.query_spectra_sources(
+                crossmatch_table=bad_table,
+                match_mode='spatial',
+            )
+
+    def test_query_spectra_spatial_batch_builds_distance_query(self):
+        """Spatial spectra batch should query ra_obj/dec_obj with DISTANCE."""
+        self.archive._logged_in = True
+        batch = Table({
+            'input_row_id': [0],
+            'input_ra': [150.0],
+            'input_dec': [2.0],
+        })
+        self.mock_client.launch_job.return_value.get_results.return_value = Table({
+            'input_row_id': [0],
+            'source_id': [100001],
+            'object_id': [100001],
+            'ra_obj': [150.0001],
+            'dec_obj': [2.0001],
+            'datalabs_path': ['/data'],
+            'file_name': ['spec.fits'],
+            'hdu_index': [1],
+            'separation_deg': [0.0001],
+        })
+
+        result = self.archive._query_spectra_spatial_batch(batch, radius_deg=1.0 / 3600.0)
+
+        assert len(result) == 1
+        args, _ = self.mock_client.launch_job.call_args
+        query = args[0]
+        assert 'DISTANCE(u.input_ra, u.input_dec, s.ra_obj, s.dec_obj)' in query
+        assert 's.source_id AS object_id' in query
+        assert 'JOIN dr1.spectra_source AS s' in query
+
+    def test_select_nearest_spectra_matches_per_input_row(self):
+        """Spatial spectra results should keep only nearest match per input row."""
+        result = Table({
+            'input_row_id': [0, 0, 1],
+            'source_id': [100002, 100001, 100003],
+            'object_id': [100002, 100001, 100003],
+            'separation_deg': [0.0002, 0.0001, 0.0003],
+        })
+
+        nearest = self.archive._select_nearest_spectra_matches(result)
+
+        assert len(nearest) == 2
+        assert list(nearest['input_row_id']) == [0, 1]
+        assert list(nearest['source_id']) == [100001, 100003]
+        assert 'separation_arcsec' in nearest.colnames
 
     def test_query_spectra_sources_error_no_input(self):
         """Test error when no input provided to query_spectra_sources."""
