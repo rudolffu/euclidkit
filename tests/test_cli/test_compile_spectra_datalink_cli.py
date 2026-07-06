@@ -425,17 +425,7 @@ def test_compile_spectra_parquet_both_runs_two_arm_exports(tmp_path):
 
     runner = CliRunner()
     catalog = tmp_path / "catalog.fits"
-    raw_frame = tmp_path / "raw_frame.vot"
     Table({'object_id': [1]}).write(catalog, format='fits', overwrite=True)
-    Table(
-        {
-            'pointing_id': [1],
-            'technique': ['SPECTROIMAGE'],
-            'obs_time_mjd': [60000.0],
-            'obs_time_utc': ['2025-01-01T00:00:00Z'],
-            'pa': [42.0],
-        }
-    ).write(raw_frame, format='votable', overwrite=True)
     stats = SimpleNamespace(
         requested_rows=1,
         exported_rows=1,
@@ -478,17 +468,9 @@ def test_dithers_to_parquet_main_cli_forwards_options(tmp_path):
 
     runner = CliRunner()
     catalog = tmp_path / "catalog.fits"
-    raw_frame = tmp_path / "raw_frame.vot"
+    credentials = tmp_path / "credentials.txt"
     Table({'object_id': [1]}).write(catalog, format='fits', overwrite=True)
-    Table(
-        {
-            'pointing_id': [1],
-            'technique': ['SPECTROIMAGE'],
-            'obs_time_mjd': [60000.0],
-            'obs_time_utc': ['2025-01-01T00:00:00Z'],
-            'pa': [42.0],
-        }
-    ).write(raw_frame, format='votable', overwrite=True)
+    credentials.write_text("user\npassword\n", encoding="utf-8")
     stats = SimpleNamespace(
         objects_requested=1,
         objects_exported=1,
@@ -513,7 +495,8 @@ def test_dithers_to_parquet_main_cli_forwards_options(tmp_path):
             '--chunk-size', '11',
             '--workers', '2',
             '--lambda-range', 'RGS',
-            '--raw-frame-table', str(raw_frame),
+            '--environment', 'IDR',
+            '--credentials', str(credentials),
             '--dithers-only',
             '--overwrite',
             '--on-error', 'skip',
@@ -529,7 +512,8 @@ def test_dithers_to_parquet_main_cli_forwards_options(tmp_path):
     assert kwargs['chunk_size'] == 11
     assert kwargs['workers'] == 2
     assert kwargs['lambda_range'] == 'RGS'
-    assert kwargs['raw_frame_table'] == str(raw_frame)
+    assert kwargs['environment'] == 'IDR'
+    assert kwargs['credentials_file'] == str(credentials)
     assert kwargs['include_combined'] is False
     assert kwargs['overwrite'] is True
     assert kwargs['on_error'] == 'skip'

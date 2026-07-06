@@ -267,11 +267,12 @@ use Datalink.
      --output-prefix ./output/raw_sir \
      --lambda-range RGS \
      --workers 8 \
-     --raw-frame-table rawframe_by_pointing_id.vot.gz
+     --environment IDR
 
-When ``--raw-frame-table`` is supplied, per-dither parquet rows are annotated
-with ``obs_time_mjd``, ``obs_time_utc``, and ``pa`` from a local raw-frame table
-filtered to ``technique = 'SPECTROIMAGE'``.
+Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
+``obs_time_utc``, and ``pa`` from the environment raw-frame table
+(``q1.raw_frame`` for PDR/Q1, ``dr1.raw_frame`` for IDR/DR1, and
+``sedm.raw_frame`` for OTF/REG), filtered to ``technique = 'SPECTROIMAGE'``.
 
 query-cutana
 ------------

@@ -129,9 +129,14 @@ Use ``dithers_to_parquet`` to export the combined spectrum and matching
        workers=8,
        lambda_range="RGS",
        include_combined=True,
+       environment="IDR",
+       credentials_file="~/.euclidkit/.cred.txt",
    )
 
 ``dithers_to_parquet`` returns ``DithersParquetStats`` with object counts,
-combined/dither row counts, output part paths, manifest path, and optional
-failures JSONL path. ``SpectrumCompiler`` remains available for legacy
-multi-extension FITS compilation and Datalink FITS outputs.
+combined/dither row counts, raw-frame metadata match counts, output part paths,
+manifest path, and optional failures JSONL path. It automatically queries
+``q1.raw_frame`` for PDR/Q1, ``dr1.raw_frame`` for IDR/DR1, or
+``sedm.raw_frame`` for OTF/REG to annotate per-dither rows with observation
+metadata. ``SpectrumCompiler`` remains available for legacy multi-extension
+FITS compilation and Datalink FITS outputs.

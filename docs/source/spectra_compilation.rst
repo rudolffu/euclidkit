@@ -214,7 +214,7 @@ and does not use Datalink.
      --chunk-size 2000 \
      --workers 8 \
      --lambda-range RGS \
-     --raw-frame-table rawframe_by_pointing_id.vot.gz
+     --environment IDR
 
 This writes:
 
@@ -228,15 +228,17 @@ Use ``--dithers-only`` when combined spectra were already exported with
 Raw-frame observation metadata
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Per-dither parquet rows can be annotated with ``obs_time_mjd``,
-``obs_time_utc``, and ``pa`` by passing ``--raw-frame-table``. The table must
-contain ``pointing_id``, ``technique``, ``obs_time_mjd``, ``obs_time_utc``, and
-``pa``. ``dithers-to-parquet`` filters it to ``technique = 'SPECTROIMAGE'`` and
-matches ``pointing_id`` to the dither ID parsed from ``*_DITH1D_<n>_SIGNAL``;
-if that dither ID is unavailable, it falls back to ``ptgid``.
+Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
+``obs_time_utc``, and ``pa`` from the archive raw-frame table. PDR/Q1 uses
+``q1.raw_frame``, IDR/DR1 uses ``dr1.raw_frame``, and OTF/REG use
+``sedm.raw_frame``. ``dithers-to-parquet`` filters to
+``technique = 'SPECTROIMAGE'`` and matches ``pointing_id`` to ``ptgid`` from
+the dither HDU. If ``ptgid`` is unavailable, it falls back to the parsed
+``dither_id`` from ``*_DITH1D_<n>_SIGNAL``.
 
-For many pointings, avoid a long literal ID-list clause. Upload a distinct
-one-column pointing table and join it to the archive raw-frame table:
+Internally, the command avoids long literal ID-list clauses by uploading a
+distinct one-column pointing table and joining it to the archive raw-frame
+table:
 
 .. code-block:: sql
 
@@ -250,8 +252,7 @@ one-column pointing table and join it to the archive raw-frame table:
      ON r.pointing_id = p.pointing_id
    WHERE r.technique = 'SPECTROIMAGE'
 
-Use the raw-frame table/schema for the relevant release if you are not querying
-DR1.
+Use ``q1.raw_frame`` for PDR/Q1 and ``sedm.raw_frame`` for OTF/REG.
 
 Notes
 -----

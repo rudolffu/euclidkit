@@ -307,15 +307,18 @@ euclidkit dithers-to-parquet \
     --output-prefix ./output/raw_sir \
     --workers 8 \
     --lambda-range RGS \
-    --raw-frame-table rawframe_by_pointing_id.vot.gz
+    --environment IDR
 ```
 
 Note: non-Datalink `compile-spectra` now defaults to Parquet and reads `LRANGE` from FITS headers for `-L/--lambda-range` filtering. Datalink remains FITS-only; `RGS`/`BGS` map to corresponding retrieval types, and `BOTH` runs two passes and writes separate `_rgs` and `_bgs` FITS files. `--retrieval-type` is kept for backward compatibility.
 
-`dithers-to-parquet --raw-frame-table` annotates per-dither rows with
-`obs_time_mjd`, `obs_time_utc`, and `pa` from a local `raw_frame` metadata
-table filtered to `technique = 'SPECTROIMAGE'`. For many pointings, build that
-metadata table with a TAP upload join rather than a long literal ID-list clause:
+`dithers-to-parquet` automatically annotates per-dither rows with
+`obs_time_mjd`, `obs_time_utc`, and `pa` from the archive raw-frame table
+filtered to `technique = 'SPECTROIMAGE'`. PDR/Q1 uses `q1.raw_frame`; IDR/DR1
+uses `dr1.raw_frame`; OTF/REG use `sedm.raw_frame`. It matches
+`raw_frame.pointing_id` to the dither HDU `ptgid`, falling back to parsed
+`dither_id` only when `ptgid` is unavailable. Internally, it uses a TAP upload
+join rather than a long literal ID-list clause:
 
 ```sql
 SELECT
@@ -424,6 +427,7 @@ dither_stats = dithers_to_parquet(
     workers=8,
     lambda_range="RGS",
     include_combined=True,
+    environment="IDR",
 )
 ```
 
@@ -476,6 +480,7 @@ dither_stats = dithers_to_parquet(
     catalog_table='qso_spectra_sources.fits',
     output_prefix='./spectra_parquet/qso_sir',
     lambda_range='RGS',
+    environment='IDR',
 )
 print(f"Wrote {len(dither_stats.dither_output_files)} dither parquet parts")
 

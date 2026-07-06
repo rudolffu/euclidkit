@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -11,11 +12,19 @@ from astropy.table import Table
 
 from euclidkit.core.spectra_parquet import (
     _enrich_dither_rows_with_raw_frame,
+    _raw_frame_table_name,
     dithers_to_parquet,
     parse_combined_extname,
     parse_dither_extname,
     spectra_to_parquet,
 )
+
+
+def test_raw_frame_table_name_mapping():
+    assert _raw_frame_table_name("PDR") == "q1.raw_frame"
+    assert _raw_frame_table_name("IDR") == "dr1.raw_frame"
+    assert _raw_frame_table_name("OTF") == "sedm.raw_frame"
+    assert _raw_frame_table_name("REG") == "sedm.raw_frame"
 
 
 def _make_signal_hdu(
@@ -239,7 +248,13 @@ def test_dithers_to_parquet_outputs_and_dithers_only(tmp_path: Path):
     assert parse_combined_extname("123_COMBINED1D_SIGNAL") == "123"
     assert parse_dither_extname("123_DITH1D_3197_SIGNAL") == ("123", 3197)
 
-    stats = dithers_to_parquet(str(catalog), str(tmp_path / "raw_sir"), workers=1, lambda_range="RGS")
+    stats = dithers_to_parquet(
+        str(catalog),
+        str(tmp_path / "raw_sir"),
+        workers=1,
+        lambda_range="RGS",
+        query_raw_frame=False,
+    )
     assert stats.objects_exported == 1
     assert stats.combined_rows == 1
     assert stats.dither_rows == 2
@@ -255,6 +270,7 @@ def test_dithers_to_parquet_outputs_and_dithers_only(tmp_path: Path):
         str(tmp_path / "raw_sir_dithers_only"),
         workers=1,
         include_combined=False,
+        query_raw_frame=False,
     )
     assert stats.combined_rows == 0
     assert stats.dither_rows == 2
@@ -262,7 +278,7 @@ def test_dithers_to_parquet_outputs_and_dithers_only(tmp_path: Path):
     assert (tmp_path / "raw_sir_dithers_only_dithers_part001.parquet").exists()
 
 
-def test_dithers_to_parquet_enriches_raw_frame_metadata(tmp_path: Path):
+def test_dithers_to_parquet_queries_raw_frame_metadata(tmp_path: Path):
     fits_dir = tmp_path / "fits"
     fits_dir.mkdir()
     file_name = "EUC_SIR_W-COMBSPEC_101_20250101T000000.000000Z.fits"
@@ -279,26 +295,42 @@ def test_dithers_to_parquet_enriches_raw_frame_metadata(tmp_path: Path):
             "dec_obj": [0.5],
         }
     ).to_parquet(catalog, index=False)
-    raw_frame = tmp_path / "raw_frame.vot"
-    Table(
-        {
-            "pointing_id": [3197, 3198, 9999],
-            "technique": ["SPECTROIMAGE", "IMAGE", "SPECTROIMAGE"],
-            "obs_time_mjd": [60123.1, 60123.2, 60124.0],
-            "obs_time_utc": ["2025-01-01T00:00:00Z", "2025-01-01T00:10:00Z", "2025-01-02T00:00:00Z"],
-            "pa": [42.5, 43.5, 99.0],
-        }
-    ).write(raw_frame, format="votable", overwrite=True)
+    captured = {}
 
-    stats = dithers_to_parquet(
-        str(catalog),
-        str(tmp_path / "raw_sir_with_raw_frame"),
-        workers=1,
-        raw_frame_table=str(raw_frame),
-    )
+    def fake_launch_job(query, upload_resource=None, upload_table_name=None):
+        captured["query"] = query
+        captured["upload_table"] = Table.read(upload_resource, format="votable")
+        captured["upload_table_name"] = upload_table_name
+        job = Mock()
+        job.get_results.return_value = Table(
+            {
+                "pointing_id": [3197],
+                "technique": ["SPECTROIMAGE"],
+                "obs_time_mjd": [60123.1],
+                "obs_time_utc": ["2025-01-01T00:00:00Z"],
+                "pa": [42.5],
+            }
+        )
+        return job
 
-    assert stats.raw_frame_rows == 3
-    assert stats.raw_frame_spectroimage_rows == 2
+    fake_archive = Mock()
+    fake_archive.euclid.launch_job.side_effect = fake_launch_job
+
+    with patch("euclidkit.core.spectra_parquet._open_raw_frame_archive", return_value=fake_archive):
+        stats = dithers_to_parquet(
+            str(catalog),
+            str(tmp_path / "raw_sir_with_raw_frame"),
+            workers=1,
+            environment="IDR",
+        )
+
+    assert "FROM dr1.raw_frame AS r" in captured["query"]
+    assert "JOIN TAP_UPLOAD." in captured["query"]
+    assert "WHERE r.technique = 'SPECTROIMAGE'" in captured["query"]
+    assert sorted(captured["upload_table"]["pointing_id"].tolist()) == [3197, 3198]
+    assert stats.raw_frame_table == "dr1.raw_frame"
+    assert stats.raw_frame_rows == 1
+    assert stats.raw_frame_spectroimage_rows == 1
     assert stats.dither_rows_with_raw_frame_metadata == 1
     assert stats.dither_rows_missing_raw_frame_metadata == 1
     combined = pd.read_parquet(tmp_path / "raw_sir_with_raw_frame_combined_part001.parquet")
@@ -315,9 +347,9 @@ def test_dithers_to_parquet_enriches_raw_frame_metadata(tmp_path: Path):
     assert pd.isna(missing["pa"])
 
     manifest = json.loads((tmp_path / "raw_sir_with_raw_frame_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["raw_frame_table"] == str(raw_frame)
-    assert manifest["raw_frame_rows"] == 3
-    assert manifest["raw_frame_spectroimage_rows"] == 2
+    assert manifest["raw_frame_table"] == "dr1.raw_frame"
+    assert manifest["raw_frame_rows"] == 1
+    assert manifest["raw_frame_spectroimage_rows"] == 1
     assert manifest["dither_rows_with_raw_frame_metadata"] == 1
     assert manifest["dither_rows_missing_raw_frame_metadata"] == 1
 
@@ -326,6 +358,22 @@ def test_raw_frame_enrichment_falls_back_to_ptgid_when_dither_id_missing():
     rows, matched, missing = _enrich_dither_rows_with_raw_frame(
         [{"dither_id": None, "ptgid": 4001}],
         {4001: {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3}},
+    )
+
+    assert matched == 1
+    assert missing == 0
+    assert rows[0]["obs_time_mjd"] == pytest.approx(60200.0)
+    assert rows[0]["obs_time_utc"] == "2025-02-01T00:00:00Z"
+    assert rows[0]["pa"] == pytest.approx(12.3)
+
+
+def test_raw_frame_enrichment_prefers_ptgid_over_dither_id():
+    rows, matched, missing = _enrich_dither_rows_with_raw_frame(
+        [{"dither_id": 1, "ptgid": 4001}],
+        {
+            1: {"obs_time_mjd": 60100.0, "obs_time_utc": "wrong", "pa": 1.0},
+            4001: {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3},
+        },
     )
 
     assert matched == 1

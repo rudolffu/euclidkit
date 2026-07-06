@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 from typing import Any
 
 import numpy as np
@@ -187,7 +188,9 @@ def dithers_to_parquet(
     overwrite: bool = False,
     on_error: str = "fail",
     show_progress: bool = False,
-    raw_frame_table: str | None = None,
+    environment: str = "PDR",
+    credentials_file: str | None = None,
+    query_raw_frame: bool = True,
 ) -> DithersParquetStats:
     """Export combined and per-dither spectra for catalog-listed objects."""
     if chunk_size <= 0:
@@ -213,80 +216,90 @@ def dithers_to_parquet(
     _validate_catalog(catalog)
     catalog = catalog.reset_index(drop=False).rename(columns={"index": "__row_index"})
     stats = DithersParquetStats(objects_requested=int(len(catalog)), manifest_path=str(manifest_path))
-    raw_frame_lookup: dict[int, dict[str, Any]] | None = None
-    if raw_frame_table is not None:
-        raw_frame_lookup, raw_frame_rows, spectroimage_rows = _build_raw_frame_lookup(Path(raw_frame_table))
-        stats.raw_frame_table = str(Path(raw_frame_table))
-        stats.raw_frame_rows = raw_frame_rows
-        stats.raw_frame_spectroimage_rows = spectroimage_rows
+    normalized_environment = str(environment).upper()
+    raw_frame_archive = None
+    if query_raw_frame:
+        stats.raw_frame_table = _raw_frame_table_name(normalized_environment)
+        raw_frame_archive = _open_raw_frame_archive(normalized_environment, credentials_file)
 
     failures: list[dict[str, Any]] = []
     combined_part_idx = 1
     dither_part_idx = 1
 
-    for start in range(0, len(catalog), chunk_size):
-        chunk = catalog.iloc[start : start + chunk_size].copy()
-        tasks = [
-            _catalog_row_to_task(row, target_lrange, include_combined=include_combined)
-            for row in chunk.to_dict(orient="records")
-        ]
-        results = _run_dither_tasks(tasks, workers)
+    try:
+        for start in range(0, len(catalog), chunk_size):
+            chunk = catalog.iloc[start : start + chunk_size].copy()
+            tasks = [
+                _catalog_row_to_task(row, target_lrange, include_combined=include_combined)
+                for row in chunk.to_dict(orient="records")
+            ]
+            results = _run_dither_tasks(tasks, workers)
 
-        combined_rows: list[dict[str, Any]] = []
-        dither_rows: list[dict[str, Any]] = []
-        for result in sorted(results, key=lambda item: int(item["row_index"])):
-            status = result["status"]
-            if status == "ok":
-                stats.objects_exported += 1
-                if result.get("combined_row") is not None:
-                    combined_rows.append(result["combined_row"])
-                object_dithers = result.get("dither_rows", [])
-                dither_rows.extend(object_dithers)
-                if not object_dithers:
-                    stats.objects_without_dithers += 1
-            elif status == "lambda_skipped":
-                stats.skipped_rows += 1
-                stats.lambda_skipped_rows += 1
-            elif status == "file_missing":
-                failures.append(_failure_record(result))
-                stats.skipped_rows += 1
-                stats.file_missing_rows += 1
-            else:
-                failure = _failure_record(result)
-                if on_error == "fail":
-                    raise RuntimeError(
-                        "failed to read catalog row {row_index} from {file_path} hdu={hdu_index}: {error}".format(
-                            **failure
+            combined_rows: list[dict[str, Any]] = []
+            dither_rows: list[dict[str, Any]] = []
+            for result in sorted(results, key=lambda item: int(item["row_index"])):
+                status = result["status"]
+                if status == "ok":
+                    stats.objects_exported += 1
+                    if result.get("combined_row") is not None:
+                        combined_rows.append(result["combined_row"])
+                    object_dithers = result.get("dither_rows", [])
+                    dither_rows.extend(object_dithers)
+                    if not object_dithers:
+                        stats.objects_without_dithers += 1
+                elif status == "lambda_skipped":
+                    stats.skipped_rows += 1
+                    stats.lambda_skipped_rows += 1
+                elif status == "file_missing":
+                    failures.append(_failure_record(result))
+                    stats.skipped_rows += 1
+                    stats.file_missing_rows += 1
+                else:
+                    failure = _failure_record(result)
+                    if on_error == "fail":
+                        raise RuntimeError(
+                            "failed to read catalog row {row_index} from {file_path} hdu={hdu_index}: {error}".format(
+                                **failure
+                            )
                         )
+                    failures.append(failure)
+                    stats.skipped_rows += 1
+                    stats.failed_rows += 1
+
+            if include_combined and combined_rows:
+                frame = pd.DataFrame(combined_rows)
+                part_path = prefix.with_name(f"{prefix.name}_combined_part{combined_part_idx:03d}.parquet")
+                _write_parquet_atomic(frame, part_path)
+                stats.combined_output_files.append(str(part_path))
+                stats.combined_rows += int(len(frame))
+                combined_part_idx += 1
+            if dither_rows:
+                if raw_frame_archive is not None:
+                    raw_frame_lookup, raw_frame_rows, spectroimage_rows = _query_raw_frame_lookup(
+                        dither_rows,
+                        archive=raw_frame_archive,
+                        environment=normalized_environment,
                     )
-                failures.append(failure)
-                stats.skipped_rows += 1
-                stats.failed_rows += 1
+                    stats.raw_frame_rows += raw_frame_rows
+                    stats.raw_frame_spectroimage_rows += spectroimage_rows
+                    (
+                        dither_rows,
+                        matched_metadata,
+                        missing_metadata,
+                    ) = _enrich_dither_rows_with_raw_frame(dither_rows, raw_frame_lookup)
+                    stats.dither_rows_with_raw_frame_metadata += matched_metadata
+                    stats.dither_rows_missing_raw_frame_metadata += missing_metadata
+                frame = pd.DataFrame(dither_rows)
+                part_path = prefix.with_name(f"{prefix.name}_dithers_part{dither_part_idx:03d}.parquet")
+                _write_parquet_atomic(frame, part_path)
+                stats.dither_output_files.append(str(part_path))
+                stats.dither_rows += int(len(frame))
+                dither_part_idx += 1
 
-        if include_combined and combined_rows:
-            frame = pd.DataFrame(combined_rows)
-            part_path = prefix.with_name(f"{prefix.name}_combined_part{combined_part_idx:03d}.parquet")
-            _write_parquet_atomic(frame, part_path)
-            stats.combined_output_files.append(str(part_path))
-            stats.combined_rows += int(len(frame))
-            combined_part_idx += 1
-        if dither_rows:
-            if raw_frame_lookup is not None:
-                (
-                    dither_rows,
-                    matched_metadata,
-                    missing_metadata,
-                ) = _enrich_dither_rows_with_raw_frame(dither_rows, raw_frame_lookup)
-                stats.dither_rows_with_raw_frame_metadata += matched_metadata
-                stats.dither_rows_missing_raw_frame_metadata += missing_metadata
-            frame = pd.DataFrame(dither_rows)
-            part_path = prefix.with_name(f"{prefix.name}_dithers_part{dither_part_idx:03d}.parquet")
-            _write_parquet_atomic(frame, part_path)
-            stats.dither_output_files.append(str(part_path))
-            stats.dither_rows += int(len(frame))
-            dither_part_idx += 1
-
-        _progress(show_progress, min(start + len(chunk), len(catalog)), len(catalog), "dithers-to-parquet")
+            _progress(show_progress, min(start + len(chunk), len(catalog)), len(catalog), "dithers-to-parquet")
+    finally:
+        if raw_frame_archive is not None:
+            raw_frame_archive.logout()
 
     if failures:
         _write_failures(failures_path, failures)
@@ -531,27 +544,80 @@ def _read_catalog_table(catalog_path: Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported catalog table format: {catalog_path}")
 
 
-def _read_raw_frame_table(raw_frame_path: Path) -> pd.DataFrame:
-    name = raw_frame_path.name.lower()
-    suffix = raw_frame_path.suffix.lower()
-    if suffix == ".csv":
-        return pd.read_csv(raw_frame_path)
-    if suffix == ".parquet":
-        return pd.read_parquet(raw_frame_path)
-    if suffix == ".feather":
-        return pd.read_feather(raw_frame_path)
-    if suffix in {".fits", ".fit"} or name.endswith((".fits.gz", ".fit.gz")):
-        return Table.read(raw_frame_path, format="fits", character_as_bytes=False).to_pandas()
-    if suffix in {".vot", ".xml"} or name.endswith((".vot.gz", ".xml.gz")):
-        return Table.read(raw_frame_path, format="votable").to_pandas()
+def _raw_frame_table_name(environment: str) -> str:
+    table_by_environment = {
+        "PDR": "q1.raw_frame",
+        "IDR": "dr1.raw_frame",
+        "OTF": "sedm.raw_frame",
+        "REG": "sedm.raw_frame",
+    }
+    normalized = str(environment).upper()
+    if normalized not in table_by_environment:
+        raise ValueError("environment must be one of: PDR, IDR, OTF, REG")
+    return table_by_environment[normalized]
+
+
+def _open_raw_frame_archive(environment: str, credentials_file: str | None):
+    from euclidkit.core.data_access import EuclidArchive
+
+    archive = EuclidArchive(environment=environment)
+    archive.login(credentials_file=credentials_file)
+    return archive
+
+
+def _query_raw_frame_lookup(
+    dither_rows: list[dict[str, Any]],
+    *,
+    archive: Any,
+    environment: str,
+) -> tuple[dict[int, dict[str, Any]], int, int]:
+    pointing_ids = sorted(
+        {
+            pointing_id
+            for row in dither_rows
+            if (pointing_id := _dither_pointing_id(row)) is not None
+        }
+    )
+    if not pointing_ids:
+        return {}, 0, 0
+
+    upload = Table({"pointing_id": np.asarray(pointing_ids, dtype=np.int64)})
+    with tempfile.NamedTemporaryFile(suffix=".vot", delete=False) as tmp_file:
+        upload.write(tmp_file.name, format="votable", overwrite=True)
+        tmp_name = tmp_file.name
+
     try:
-        return Table.read(raw_frame_path).to_pandas()
-    except Exception as exc:
-        raise ValueError(f"Unsupported raw-frame table format: {raw_frame_path}") from exc
+        table_name = _raw_frame_table_name(environment)
+        upload_name = f"dither_pointings_{np.random.randint(10000, 99999)}"
+        query = f"""
+        SELECT
+            r.pointing_id,
+            r.technique,
+            r.obs_time_mjd,
+            r.obs_time_utc,
+            r.pa
+        FROM {table_name} AS r
+        JOIN TAP_UPLOAD.{upload_name} AS p
+          ON r.pointing_id = p.pointing_id
+        WHERE r.technique = 'SPECTROIMAGE'
+        """
+        job = archive.euclid.launch_job(
+            query,
+            upload_resource=tmp_name,
+            upload_table_name=upload_name,
+        )
+        result = job.get_results()
+        if result is None:
+            return {}, 0, 0
+        frame = result.to_pandas() if hasattr(result, "to_pandas") else pd.DataFrame(result)
+        lookup, raw_frame_rows, spectroimage_rows = _build_raw_frame_lookup_from_frame(frame)
+        return lookup, raw_frame_rows, spectroimage_rows
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
 
 
-def _build_raw_frame_lookup(raw_frame_path: Path) -> tuple[dict[int, dict[str, Any]], int, int]:
-    frame = _read_raw_frame_table(raw_frame_path)
+def _build_raw_frame_lookup_from_frame(frame: pd.DataFrame) -> tuple[dict[int, dict[str, Any]], int, int]:
     row_count = int(len(frame))
     required = {"pointing_id", "technique", "obs_time_mjd", "obs_time_utc", "pa"}
     column_lookup = {str(col).lower(): col for col in frame.columns}
@@ -607,10 +673,10 @@ def _enrich_dither_rows_with_raw_frame(
 
 
 def _dither_pointing_id(row: dict[str, Any]) -> int | None:
-    dither_id = _optional_int(row.get("dither_id"))
-    if dither_id is not None:
-        return dither_id
-    return _optional_int(row.get("ptgid"))
+    ptgid = _optional_int(row.get("ptgid"))
+    if ptgid is not None:
+        return ptgid
+    return _optional_int(row.get("dither_id"))
 
 
 def _validate_catalog(catalog: pd.DataFrame) -> None:
