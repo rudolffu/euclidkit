@@ -213,7 +213,8 @@ and does not use Datalink.
      --output-prefix ./output/raw_sir \
      --chunk-size 2000 \
      --workers 8 \
-     --lambda-range RGS
+     --lambda-range RGS \
+     --raw-frame-table rawframe_by_pointing_id.vot.gz
 
 This writes:
 
@@ -223,6 +224,34 @@ This writes:
 
 Use ``--dithers-only`` when combined spectra were already exported with
 ``compile-spectra`` Parquet mode.
+
+Raw-frame observation metadata
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Per-dither parquet rows can be annotated with ``obs_time_mjd``,
+``obs_time_utc``, and ``pa`` by passing ``--raw-frame-table``. The table must
+contain ``pointing_id``, ``technique``, ``obs_time_mjd``, ``obs_time_utc``, and
+``pa``. ``dithers-to-parquet`` filters it to ``technique = 'SPECTROIMAGE'`` and
+matches ``pointing_id`` to the dither ID parsed from ``*_DITH1D_<n>_SIGNAL``;
+if that dither ID is unavailable, it falls back to ``ptgid``.
+
+For many pointings, avoid a long literal ID-list clause. Upload a distinct
+one-column pointing table and join it to the archive raw-frame table:
+
+.. code-block:: sql
+
+   SELECT
+     r.pointing_id,
+     r.obs_time_mjd,
+     r.obs_time_utc,
+     r.pa
+   FROM dr1.raw_frame AS r
+   JOIN TAP_UPLOAD.dither_pointings AS p
+     ON r.pointing_id = p.pointing_id
+   WHERE r.technique = 'SPECTROIMAGE'
+
+Use the raw-frame table/schema for the relevant release if you are not querying
+DR1.
 
 Notes
 -----

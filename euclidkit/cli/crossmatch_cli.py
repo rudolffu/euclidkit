@@ -1161,6 +1161,8 @@ def compile_segmap(input: str, output_dir: str, size_arcsec: float, overwrite: b
               help='Parallel FITS read workers (default: min(os.cpu_count(), 8))')
 @click.option('--lambda-range', type=click.Choice(['BGS', 'RGS']), default=None,
               help='Optional LRANGE filter')
+@click.option('--raw-frame-table', type=click.Path(exists=True), default=None,
+              help='Optional raw_frame metadata table for dither obs_time_mjd, obs_time_utc, and pa')
 @click.option('--dithers-only', is_flag=True,
               help='Write only per-dither parquet parts, skipping combined rows')
 @click.option('--overwrite', is_flag=True,
@@ -1173,8 +1175,8 @@ def compile_segmap(input: str, output_dir: str, size_arcsec: float, overwrite: b
               help='Disable export progress')
 def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: int,
                            workers: Optional[int], lambda_range: Optional[str],
-                           dithers_only: bool, overwrite: bool, on_error: str,
-                           progress: Optional[bool]):
+                           raw_frame_table: Optional[str], dithers_only: bool,
+                           overwrite: bool, on_error: str, progress: Optional[bool]):
     """Export local Datalabs combined and per-dither SIR spectra to parquet."""
     from euclidkit.core.spectra_parquet import dithers_to_parquet
 
@@ -1190,12 +1192,14 @@ def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: i
             overwrite=overwrite,
             on_error=on_error,
             show_progress=show_progress,
+            raw_frame_table=raw_frame_table,
         )
         click.echo(
             "Dither parquet export completed successfully!\n"
             "objects_requested={objects_requested} objects_exported={objects_exported} "
             "combined_rows={combined_rows} dither_rows={dither_rows} skipped_rows={skipped_rows} "
             "failed_rows={failed_rows} file_missing_rows={file_missing_rows} "
+            "raw_frame_matches={raw_frame_matches} raw_frame_missing={raw_frame_missing} "
             "combined_parts={combined_parts} dither_parts={dither_parts} manifest={manifest}".format(
                 objects_requested=stats.objects_requested,
                 objects_exported=stats.objects_exported,
@@ -1204,6 +1208,8 @@ def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: i
                 skipped_rows=stats.skipped_rows,
                 failed_rows=stats.failed_rows,
                 file_missing_rows=stats.file_missing_rows,
+                raw_frame_matches=getattr(stats, 'dither_rows_with_raw_frame_metadata', 0),
+                raw_frame_missing=getattr(stats, 'dither_rows_missing_raw_frame_metadata', 0),
                 combined_parts=len(stats.combined_output_files),
                 dither_parts=len(stats.dither_output_files),
                 manifest=stats.manifest_path,

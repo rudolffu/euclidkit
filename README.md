@@ -306,10 +306,28 @@ euclidkit dithers-to-parquet \
     --catalog-table spectra_sources.fits \
     --output-prefix ./output/raw_sir \
     --workers 8 \
-    --lambda-range RGS
+    --lambda-range RGS \
+    --raw-frame-table rawframe_by_pointing_id.vot.gz
 ```
 
 Note: non-Datalink `compile-spectra` now defaults to Parquet and reads `LRANGE` from FITS headers for `-L/--lambda-range` filtering. Datalink remains FITS-only; `RGS`/`BGS` map to corresponding retrieval types, and `BOTH` runs two passes and writes separate `_rgs` and `_bgs` FITS files. `--retrieval-type` is kept for backward compatibility.
+
+`dithers-to-parquet --raw-frame-table` annotates per-dither rows with
+`obs_time_mjd`, `obs_time_utc`, and `pa` from a local `raw_frame` metadata
+table filtered to `technique = 'SPECTROIMAGE'`. For many pointings, build that
+metadata table with a TAP upload join rather than a long literal ID-list clause:
+
+```sql
+SELECT
+  r.pointing_id,
+  r.obs_time_mjd,
+  r.obs_time_utc,
+  r.pa
+FROM dr1.raw_frame AS r
+JOIN TAP_UPLOAD.dither_pointings AS p
+  ON r.pointing_id = p.pointing_id
+WHERE r.technique = 'SPECTROIMAGE'
+```
 
 ## Key Features
 

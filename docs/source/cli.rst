@@ -266,7 +266,12 @@ use Datalink.
      --catalog-table spectra_sources.fits \
      --output-prefix ./output/raw_sir \
      --lambda-range RGS \
-     --workers 8
+     --workers 8 \
+     --raw-frame-table rawframe_by_pointing_id.vot.gz
+
+When ``--raw-frame-table`` is supplied, per-dither parquet rows are annotated
+with ``obs_time_mjd``, ``obs_time_utc``, and ``pa`` from a local raw-frame table
+filtered to ``technique = 'SPECTROIMAGE'``.
 
 query-cutana
 ------------

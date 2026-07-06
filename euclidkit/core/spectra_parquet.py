@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from astropy.io import fits
+from astropy.table import Table
 
 
 @dataclass
@@ -50,6 +51,11 @@ class DithersParquetStats:
     dither_output_files: list[str] = field(default_factory=list)
     manifest_path: str = ""
     failures_path: str = ""
+    raw_frame_table: str = ""
+    raw_frame_rows: int = 0
+    raw_frame_spectroimage_rows: int = 0
+    dither_rows_with_raw_frame_metadata: int = 0
+    dither_rows_missing_raw_frame_metadata: int = 0
 
 
 def default_raw_parquet_workers() -> int:
@@ -181,6 +187,7 @@ def dithers_to_parquet(
     overwrite: bool = False,
     on_error: str = "fail",
     show_progress: bool = False,
+    raw_frame_table: str | None = None,
 ) -> DithersParquetStats:
     """Export combined and per-dither spectra for catalog-listed objects."""
     if chunk_size <= 0:
@@ -206,6 +213,12 @@ def dithers_to_parquet(
     _validate_catalog(catalog)
     catalog = catalog.reset_index(drop=False).rename(columns={"index": "__row_index"})
     stats = DithersParquetStats(objects_requested=int(len(catalog)), manifest_path=str(manifest_path))
+    raw_frame_lookup: dict[int, dict[str, Any]] | None = None
+    if raw_frame_table is not None:
+        raw_frame_lookup, raw_frame_rows, spectroimage_rows = _build_raw_frame_lookup(Path(raw_frame_table))
+        stats.raw_frame_table = str(Path(raw_frame_table))
+        stats.raw_frame_rows = raw_frame_rows
+        stats.raw_frame_spectroimage_rows = spectroimage_rows
 
     failures: list[dict[str, Any]] = []
     combined_part_idx = 1
@@ -258,6 +271,14 @@ def dithers_to_parquet(
             stats.combined_rows += int(len(frame))
             combined_part_idx += 1
         if dither_rows:
+            if raw_frame_lookup is not None:
+                (
+                    dither_rows,
+                    matched_metadata,
+                    missing_metadata,
+                ) = _enrich_dither_rows_with_raw_frame(dither_rows, raw_frame_lookup)
+                stats.dither_rows_with_raw_frame_metadata += matched_metadata
+                stats.dither_rows_missing_raw_frame_metadata += missing_metadata
             frame = pd.DataFrame(dither_rows)
             part_path = prefix.with_name(f"{prefix.name}_dithers_part{dither_part_idx:03d}.parquet")
             _write_parquet_atomic(frame, part_path)
@@ -294,6 +315,11 @@ def dithers_to_parquet(
             "combined_output_files": stats.combined_output_files,
             "dither_output_files": stats.dither_output_files,
             "failures_path": stats.failures_path,
+            "raw_frame_table": stats.raw_frame_table,
+            "raw_frame_rows": stats.raw_frame_rows,
+            "raw_frame_spectroimage_rows": stats.raw_frame_spectroimage_rows,
+            "dither_rows_with_raw_frame_metadata": stats.dither_rows_with_raw_frame_metadata,
+            "dither_rows_missing_raw_frame_metadata": stats.dither_rows_missing_raw_frame_metadata,
         },
     )
     if show_progress and stats.objects_requested:
@@ -505,6 +531,88 @@ def _read_catalog_table(catalog_path: Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported catalog table format: {catalog_path}")
 
 
+def _read_raw_frame_table(raw_frame_path: Path) -> pd.DataFrame:
+    name = raw_frame_path.name.lower()
+    suffix = raw_frame_path.suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(raw_frame_path)
+    if suffix == ".parquet":
+        return pd.read_parquet(raw_frame_path)
+    if suffix == ".feather":
+        return pd.read_feather(raw_frame_path)
+    if suffix in {".fits", ".fit"} or name.endswith((".fits.gz", ".fit.gz")):
+        return Table.read(raw_frame_path, format="fits", character_as_bytes=False).to_pandas()
+    if suffix in {".vot", ".xml"} or name.endswith((".vot.gz", ".xml.gz")):
+        return Table.read(raw_frame_path, format="votable").to_pandas()
+    try:
+        return Table.read(raw_frame_path).to_pandas()
+    except Exception as exc:
+        raise ValueError(f"Unsupported raw-frame table format: {raw_frame_path}") from exc
+
+
+def _build_raw_frame_lookup(raw_frame_path: Path) -> tuple[dict[int, dict[str, Any]], int, int]:
+    frame = _read_raw_frame_table(raw_frame_path)
+    row_count = int(len(frame))
+    required = {"pointing_id", "technique", "obs_time_mjd", "obs_time_utc", "pa"}
+    column_lookup = {str(col).lower(): col for col in frame.columns}
+    missing = sorted(required.difference(column_lookup))
+    if missing:
+        raise ValueError(f"raw-frame table missing required columns: {missing}")
+
+    raw = pd.DataFrame({name: frame[column_lookup[name]] for name in required})
+    technique = raw["technique"].map(_as_text).str.strip().str.upper()
+    raw = raw.loc[technique == "SPECTROIMAGE"].copy()
+    spectroimage_count = int(len(raw))
+
+    raw["pointing_id"] = pd.to_numeric(raw["pointing_id"], errors="coerce")
+    raw["obs_time_mjd"] = pd.to_numeric(raw["obs_time_mjd"], errors="coerce")
+    raw["pa"] = pd.to_numeric(raw["pa"], errors="coerce")
+    raw["obs_time_utc"] = raw["obs_time_utc"].map(_clean_text_or_none)
+    raw = raw.dropna(subset=["pointing_id"])
+
+    lookup: dict[int, dict[str, Any]] = {}
+    for row in raw.to_dict(orient="records"):
+        pointing_id = _optional_int(row.get("pointing_id"))
+        if pointing_id is None or pointing_id in lookup:
+            continue
+        lookup[pointing_id] = {
+            "obs_time_mjd": _optional_float(row.get("obs_time_mjd")),
+            "obs_time_utc": row.get("obs_time_utc"),
+            "pa": _optional_float(row.get("pa")),
+        }
+    return lookup, row_count, spectroimage_count
+
+
+def _enrich_dither_rows_with_raw_frame(
+    dither_rows: list[dict[str, Any]],
+    raw_frame_lookup: dict[int, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int, int]:
+    matched = 0
+    missing = 0
+    enriched: list[dict[str, Any]] = []
+    for row in dither_rows:
+        out = dict(row)
+        pointing_id = _dither_pointing_id(out)
+        metadata = raw_frame_lookup.get(pointing_id) if pointing_id is not None else None
+        if metadata is not None:
+            out.update(metadata)
+            matched += 1
+        else:
+            out["obs_time_mjd"] = None
+            out["obs_time_utc"] = None
+            out["pa"] = None
+            missing += 1
+        enriched.append(out)
+    return enriched, matched, missing
+
+
+def _dither_pointing_id(row: dict[str, Any]) -> int | None:
+    dither_id = _optional_int(row.get("dither_id"))
+    if dither_id is not None:
+        return dither_id
+    return _optional_int(row.get("ptgid"))
+
+
 def _validate_catalog(catalog: pd.DataFrame) -> None:
     required = {"datalabs_path", "file_name", "hdu_index", "source_id", "object_id", "ra_obj", "dec_obj"}
     missing = required.difference(set(catalog.columns))
@@ -631,6 +739,34 @@ def _as_text(value: Any) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+def _clean_text_or_none(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = _as_text(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return None
+    return text
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    number = _optional_float(value)
+    if number is None:
+        return None
+    try:
+        return int(number)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _failure_record(result: dict[str, Any]) -> dict[str, Any]:

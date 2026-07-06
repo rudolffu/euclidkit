@@ -10,6 +10,7 @@ from astropy.io import fits
 from astropy.table import Table
 
 from euclidkit.core.spectra_parquet import (
+    _enrich_dither_rows_with_raw_frame,
     dithers_to_parquet,
     parse_combined_extname,
     parse_dither_extname,
@@ -259,3 +260,76 @@ def test_dithers_to_parquet_outputs_and_dithers_only(tmp_path: Path):
     assert stats.dither_rows == 2
     assert not list(tmp_path.glob("raw_sir_dithers_only_combined_part*.parquet"))
     assert (tmp_path / "raw_sir_dithers_only_dithers_part001.parquet").exists()
+
+
+def test_dithers_to_parquet_enriches_raw_frame_metadata(tmp_path: Path):
+    fits_dir = tmp_path / "fits"
+    fits_dir.mkdir()
+    file_name = "EUC_SIR_W-COMBSPEC_101_20250101T000000.000000Z.fits"
+    combined_hdu = _write_dither_test_fits(fits_dir / file_name)
+    catalog = tmp_path / "catalog.parquet"
+    pd.DataFrame(
+        {
+            "datalabs_path": [str(fits_dir)],
+            "file_name": [file_name],
+            "hdu_index": [combined_hdu],
+            "source_id": [9001],
+            "object_id": [9001],
+            "ra_obj": [11.5],
+            "dec_obj": [0.5],
+        }
+    ).to_parquet(catalog, index=False)
+    raw_frame = tmp_path / "raw_frame.vot"
+    Table(
+        {
+            "pointing_id": [3197, 3198, 9999],
+            "technique": ["SPECTROIMAGE", "IMAGE", "SPECTROIMAGE"],
+            "obs_time_mjd": [60123.1, 60123.2, 60124.0],
+            "obs_time_utc": ["2025-01-01T00:00:00Z", "2025-01-01T00:10:00Z", "2025-01-02T00:00:00Z"],
+            "pa": [42.5, 43.5, 99.0],
+        }
+    ).write(raw_frame, format="votable", overwrite=True)
+
+    stats = dithers_to_parquet(
+        str(catalog),
+        str(tmp_path / "raw_sir_with_raw_frame"),
+        workers=1,
+        raw_frame_table=str(raw_frame),
+    )
+
+    assert stats.raw_frame_rows == 3
+    assert stats.raw_frame_spectroimage_rows == 2
+    assert stats.dither_rows_with_raw_frame_metadata == 1
+    assert stats.dither_rows_missing_raw_frame_metadata == 1
+    combined = pd.read_parquet(tmp_path / "raw_sir_with_raw_frame_combined_part001.parquet")
+    dithers = pd.read_parquet(tmp_path / "raw_sir_with_raw_frame_dithers_part001.parquet")
+    assert "obs_time_mjd" not in combined.columns
+    assert {"obs_time_mjd", "obs_time_utc", "pa"}.issubset(dithers.columns)
+    matched = dithers.loc[dithers["dither_id"] == 3197].iloc[0]
+    missing = dithers.loc[dithers["dither_id"] == 3198].iloc[0]
+    assert matched["obs_time_mjd"] == pytest.approx(60123.1)
+    assert matched["obs_time_utc"] == "2025-01-01T00:00:00Z"
+    assert matched["pa"] == pytest.approx(42.5)
+    assert pd.isna(missing["obs_time_mjd"])
+    assert pd.isna(missing["obs_time_utc"])
+    assert pd.isna(missing["pa"])
+
+    manifest = json.loads((tmp_path / "raw_sir_with_raw_frame_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["raw_frame_table"] == str(raw_frame)
+    assert manifest["raw_frame_rows"] == 3
+    assert manifest["raw_frame_spectroimage_rows"] == 2
+    assert manifest["dither_rows_with_raw_frame_metadata"] == 1
+    assert manifest["dither_rows_missing_raw_frame_metadata"] == 1
+
+
+def test_raw_frame_enrichment_falls_back_to_ptgid_when_dither_id_missing():
+    rows, matched, missing = _enrich_dither_rows_with_raw_frame(
+        [{"dither_id": None, "ptgid": 4001}],
+        {4001: {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3}},
+    )
+
+    assert matched == 1
+    assert missing == 0
+    assert rows[0]["obs_time_mjd"] == pytest.approx(60200.0)
+    assert rows[0]["obs_time_utc"] == "2025-02-01T00:00:00Z"
+    assert rows[0]["pa"] == pytest.approx(12.3)
