@@ -571,17 +571,22 @@ def _query_raw_frame_lookup(
     archive: Any,
     environment: str,
 ) -> tuple[dict[int, dict[str, Any]], int, int]:
-    pointing_ids = sorted(
+    pointings = sorted(
         {
-            pointing_id
+            key
             for row in dither_rows
-            if (pointing_id := _dither_pointing_id(row)) is not None
+            if (key := _dither_raw_frame_key(row)) is not None
         }
     )
-    if not pointing_ids:
+    if not pointings:
         return {}, 0, 0
 
-    upload = Table({"pointing_id": np.asarray(pointing_ids, dtype=np.int64)})
+    upload = Table(
+        {
+            "pointing_id": np.asarray([pointing_id for pointing_id, _ in pointings], dtype=np.int64),
+            "gwa_pos": [gwa_pos for _, gwa_pos in pointings],
+        }
+    )
     with tempfile.NamedTemporaryFile(suffix=".vot", delete=False) as tmp_file:
         upload.write(tmp_file.name, format="votable", overwrite=True)
         tmp_name = tmp_file.name
@@ -592,14 +597,14 @@ def _query_raw_frame_lookup(
         query = f"""
         SELECT
             r.pointing_id,
-            r.technique,
+            r.grism_wheel_pos,
             r.obs_time_mjd,
             r.obs_time_utc,
             r.pa
         FROM {table_name} AS r
         JOIN TAP_UPLOAD.{upload_name} AS p
           ON r.pointing_id = p.pointing_id
-        WHERE r.technique = 'SPECTROIMAGE'
+         AND r.grism_wheel_pos = p.gwa_pos
         """
         job = archive.euclid.launch_job(
             query,
@@ -610,56 +615,60 @@ def _query_raw_frame_lookup(
         if result is None:
             return {}, 0, 0
         frame = result.to_pandas() if hasattr(result, "to_pandas") else pd.DataFrame(result)
-        lookup, raw_frame_rows, spectroimage_rows = _build_raw_frame_lookup_from_frame(frame)
-        return lookup, raw_frame_rows, spectroimage_rows
+        lookup, raw_frame_rows = _build_raw_frame_lookup_from_frame(frame)
+        return lookup, raw_frame_rows, raw_frame_rows
     finally:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
 
 
-def _build_raw_frame_lookup_from_frame(frame: pd.DataFrame) -> tuple[dict[int, dict[str, Any]], int, int]:
+def _build_raw_frame_lookup_from_frame(frame: pd.DataFrame) -> tuple[dict[tuple[int, str], dict[str, Any]], int]:
     row_count = int(len(frame))
-    required = {"pointing_id", "technique", "obs_time_mjd", "obs_time_utc", "pa"}
+    required = {"pointing_id", "grism_wheel_pos", "obs_time_mjd", "obs_time_utc", "pa"}
     column_lookup = {str(col).lower(): col for col in frame.columns}
     missing = sorted(required.difference(column_lookup))
     if missing:
         raise ValueError(f"raw-frame table missing required columns: {missing}")
 
     raw = pd.DataFrame({name: frame[column_lookup[name]] for name in required})
-    technique = raw["technique"].map(_as_text).str.strip().str.upper()
-    raw = raw.loc[technique == "SPECTROIMAGE"].copy()
-    spectroimage_count = int(len(raw))
-
     raw["pointing_id"] = pd.to_numeric(raw["pointing_id"], errors="coerce")
     raw["obs_time_mjd"] = pd.to_numeric(raw["obs_time_mjd"], errors="coerce")
     raw["pa"] = pd.to_numeric(raw["pa"], errors="coerce")
     raw["obs_time_utc"] = raw["obs_time_utc"].map(_clean_text_or_none)
+    raw["grism_wheel_pos"] = raw["grism_wheel_pos"].map(_normalize_gwa_pos)
     raw = raw.dropna(subset=["pointing_id"])
 
-    lookup: dict[int, dict[str, Any]] = {}
+    lookup: dict[tuple[int, str], dict[str, Any]] = {}
     for row in raw.to_dict(orient="records"):
         pointing_id = _optional_int(row.get("pointing_id"))
-        if pointing_id is None or pointing_id in lookup:
+        gwa_pos = row.get("grism_wheel_pos")
+        if pointing_id is None or not gwa_pos:
             continue
-        lookup[pointing_id] = {
+        key = (pointing_id, str(gwa_pos))
+        if key in lookup:
+            continue
+        lookup[key] = {
             "obs_time_mjd": _optional_float(row.get("obs_time_mjd")),
             "obs_time_utc": row.get("obs_time_utc"),
             "pa": _optional_float(row.get("pa")),
         }
-    return lookup, row_count, spectroimage_count
+    return lookup, row_count
 
 
 def _enrich_dither_rows_with_raw_frame(
     dither_rows: list[dict[str, Any]],
-    raw_frame_lookup: dict[int, dict[str, Any]],
+    raw_frame_lookup: dict[Any, dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int, int]:
     matched = 0
     missing = 0
     enriched: list[dict[str, Any]] = []
     for row in dither_rows:
         out = dict(row)
-        pointing_id = _dither_pointing_id(out)
-        metadata = raw_frame_lookup.get(pointing_id) if pointing_id is not None else None
+        key = _dither_raw_frame_key(out)
+        metadata = raw_frame_lookup.get(key) if key is not None else None
+        if metadata is None:
+            pointing_id = _dither_pointing_id(out)
+            metadata = raw_frame_lookup.get(pointing_id) if pointing_id is not None else None
         if metadata is not None:
             out.update(metadata)
             matched += 1
@@ -677,6 +686,14 @@ def _dither_pointing_id(row: dict[str, Any]) -> int | None:
     if ptgid is not None:
         return ptgid
     return _optional_int(row.get("dither_id"))
+
+
+def _dither_raw_frame_key(row: dict[str, Any]) -> tuple[int, str] | None:
+    pointing_id = _dither_pointing_id(row)
+    gwa_pos = _normalize_gwa_pos(row.get("gwa_pos"))
+    if pointing_id is None or gwa_pos is None:
+        return None
+    return pointing_id, gwa_pos
 
 
 def _validate_catalog(catalog: pd.DataFrame) -> None:
@@ -814,6 +831,11 @@ def _clean_text_or_none(value: Any) -> str | None:
     if not text or text.lower() in {"nan", "none", "null"}:
         return None
     return text
+
+
+def _normalize_gwa_pos(value: Any) -> str | None:
+    text = _clean_text_or_none(value)
+    return text.upper() if text is not None else None
 
 
 def _optional_float(value: Any) -> float | None:

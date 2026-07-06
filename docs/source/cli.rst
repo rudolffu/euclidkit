@@ -272,7 +272,8 @@ use Datalink.
 Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
 ``obs_time_utc``, and ``pa`` from the environment raw-frame table
 (``q1.raw_frame`` for PDR/Q1, ``dr1.raw_frame`` for IDR/DR1, and
-``sedm.raw_frame`` for OTF/REG), filtered to ``technique = 'SPECTROIMAGE'``.
+``sedm.raw_frame`` for OTF/REG), joined on ``pointing_id`` and
+``grism_wheel_pos = gwa_pos``.
 
 query-cutana
 ------------

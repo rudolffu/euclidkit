@@ -313,23 +313,24 @@ euclidkit dithers-to-parquet \
 Note: non-Datalink `compile-spectra` now defaults to Parquet and reads `LRANGE` from FITS headers for `-L/--lambda-range` filtering. Datalink remains FITS-only; `RGS`/`BGS` map to corresponding retrieval types, and `BOTH` runs two passes and writes separate `_rgs` and `_bgs` FITS files. `--retrieval-type` is kept for backward compatibility.
 
 `dithers-to-parquet` automatically annotates per-dither rows with
-`obs_time_mjd`, `obs_time_utc`, and `pa` from the archive raw-frame table
-filtered to `technique = 'SPECTROIMAGE'`. PDR/Q1 uses `q1.raw_frame`; IDR/DR1
-uses `dr1.raw_frame`; OTF/REG use `sedm.raw_frame`. It matches
-`raw_frame.pointing_id` to the dither HDU `ptgid`, falling back to parsed
+`obs_time_mjd`, `obs_time_utc`, and `pa` from the archive raw-frame table.
+PDR/Q1 uses `q1.raw_frame`; IDR/DR1 uses `dr1.raw_frame`; OTF/REG use
+`sedm.raw_frame`. It matches `raw_frame.pointing_id` to the dither HDU `ptgid`
+and requires `raw_frame.grism_wheel_pos = gwa_pos`, falling back to parsed
 `dither_id` only when `ptgid` is unavailable. Internally, it uses a TAP upload
 join rather than a long literal ID-list clause:
 
 ```sql
 SELECT
   r.pointing_id,
+  r.grism_wheel_pos,
   r.obs_time_mjd,
   r.obs_time_utc,
   r.pa
 FROM dr1.raw_frame AS r
 JOIN TAP_UPLOAD.dither_pointings AS p
   ON r.pointing_id = p.pointing_id
-WHERE r.technique = 'SPECTROIMAGE'
+ AND r.grism_wheel_pos = p.gwa_pos
 ```
 
 ## Key Features

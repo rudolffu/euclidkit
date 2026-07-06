@@ -231,10 +231,10 @@ Raw-frame observation metadata
 Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
 ``obs_time_utc``, and ``pa`` from the archive raw-frame table. PDR/Q1 uses
 ``q1.raw_frame``, IDR/DR1 uses ``dr1.raw_frame``, and OTF/REG use
-``sedm.raw_frame``. ``dithers-to-parquet`` filters to
-``technique = 'SPECTROIMAGE'`` and matches ``pointing_id`` to ``ptgid`` from
-the dither HDU. If ``ptgid`` is unavailable, it falls back to the parsed
-``dither_id`` from ``*_DITH1D_<n>_SIGNAL``.
+``sedm.raw_frame``. ``dithers-to-parquet`` matches raw-frame ``pointing_id`` to
+``ptgid`` from the dither HDU and requires ``grism_wheel_pos`` to match the
+dither ``gwa_pos``. If ``ptgid`` is unavailable, it falls back to the parsed
+``dither_id`` from ``*_DITH1D_<n>_SIGNAL`` for the pointing key.
 
 Internally, the command avoids long literal ID-list clauses by uploading a
 distinct one-column pointing table and joining it to the archive raw-frame
@@ -244,13 +244,14 @@ table:
 
    SELECT
      r.pointing_id,
+     r.grism_wheel_pos,
      r.obs_time_mjd,
      r.obs_time_utc,
      r.pa
    FROM dr1.raw_frame AS r
    JOIN TAP_UPLOAD.dither_pointings AS p
      ON r.pointing_id = p.pointing_id
-   WHERE r.technique = 'SPECTROIMAGE'
+    AND r.grism_wheel_pos = p.gwa_pos
 
 Use ``q1.raw_frame`` for PDR/Q1 and ``sedm.raw_frame`` for OTF/REG.
 

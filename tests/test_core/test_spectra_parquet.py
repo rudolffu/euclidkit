@@ -305,7 +305,7 @@ def test_dithers_to_parquet_queries_raw_frame_metadata(tmp_path: Path):
         job.get_results.return_value = Table(
             {
                 "pointing_id": [3197],
-                "technique": ["SPECTROIMAGE"],
+                "grism_wheel_pos": ["RGS000"],
                 "obs_time_mjd": [60123.1],
                 "obs_time_utc": ["2025-01-01T00:00:00Z"],
                 "pa": [42.5],
@@ -326,8 +326,10 @@ def test_dithers_to_parquet_queries_raw_frame_metadata(tmp_path: Path):
 
     assert "FROM dr1.raw_frame AS r" in captured["query"]
     assert "JOIN TAP_UPLOAD." in captured["query"]
-    assert "WHERE r.technique = 'SPECTROIMAGE'" in captured["query"]
+    assert "r.grism_wheel_pos = p.gwa_pos" in captured["query"]
+    assert "technique" not in captured["query"].lower()
     assert sorted(captured["upload_table"]["pointing_id"].tolist()) == [3197, 3198]
+    assert captured["upload_table"]["gwa_pos"].tolist() == ["RGS000", "RGS000"]
     assert stats.raw_frame_table == "dr1.raw_frame"
     assert stats.raw_frame_rows == 1
     assert stats.raw_frame_spectroimage_rows == 1
@@ -356,8 +358,8 @@ def test_dithers_to_parquet_queries_raw_frame_metadata(tmp_path: Path):
 
 def test_raw_frame_enrichment_falls_back_to_ptgid_when_dither_id_missing():
     rows, matched, missing = _enrich_dither_rows_with_raw_frame(
-        [{"dither_id": None, "ptgid": 4001}],
-        {4001: {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3}},
+        [{"dither_id": None, "ptgid": 4001, "gwa_pos": "RGS000"}],
+        {(4001, "RGS000"): {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3}},
     )
 
     assert matched == 1
@@ -369,10 +371,10 @@ def test_raw_frame_enrichment_falls_back_to_ptgid_when_dither_id_missing():
 
 def test_raw_frame_enrichment_prefers_ptgid_over_dither_id():
     rows, matched, missing = _enrich_dither_rows_with_raw_frame(
-        [{"dither_id": 1, "ptgid": 4001}],
+        [{"dither_id": 1, "ptgid": 4001, "gwa_pos": "rgs000"}],
         {
-            1: {"obs_time_mjd": 60100.0, "obs_time_utc": "wrong", "pa": 1.0},
-            4001: {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3},
+            (1, "RGS000"): {"obs_time_mjd": 60100.0, "obs_time_utc": "wrong", "pa": 1.0},
+            (4001, "RGS000"): {"obs_time_mjd": 60200.0, "obs_time_utc": "2025-02-01T00:00:00Z", "pa": 12.3},
         },
     )
 
