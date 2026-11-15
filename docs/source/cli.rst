@@ -7,6 +7,7 @@ Top-level commands
 - ``euclidkit init-config``
 - ``euclidkit diagnostics``
 - ``euclidkit crossmatch``
+- ``euclidkit query-morph``
 - ``euclidkit query-spectra``
 - ``euclidkit query-zspe``
 - ``euclidkit compile-spectra``
@@ -33,6 +34,51 @@ Commands that access the Euclid archive support:
 - ``--idr-field`` (IDR-only commands): ``WIDE`` or ``DEEP``
 - ``--idr-deep-partition`` for MER-based IDR DEEP workflows:
   ``survey`` (default), ``mode``, or ``both``
+
+.. _query-morph:
+
+query-morph
+-----------
+
+Query IDR MER morphology by object ID and inner join measurements onto matched
+input rows. A prior MER crossmatch is unnecessary if Euclid ``object_id`` values
+are already available. The key is case-insensitive; returned morphology names
+are lowercase. Repeated input IDs retain separate rows. Existing columns with
+the selected measurement names are replaced.
+
+.. code-block:: bash
+
+   euclidkit query-morph -i sources.fits -o morphology.fits
+   euclidkit query-morph -i sources.fits -o deep_morphology.parquet \
+       --idr-field DEEP --idr-deep-partition both --full-async
+
+This command is IDR-only. WIDE (default) queries
+``catalogue.mer_morphology_wide_survey`` first, then
+``catalogue.mer_morphology_wide_mode`` for unmatched IDs. DEEP defaults to
+``catalogue.mer_morphology_deep_survey``; ``--idr-deep-partition mode`` selects
+``catalogue.mer_morphology_deep_mode``. ``both`` queries both DEEP partitions
+directly, keeping the survey measurement if an ID occurs in both.
+
+The selection contains each of these columns and its ``_err`` column:
+
+- ``concentration``, ``asymmetry``, ``smoothness`` (CAS)
+- ``moment_20`` (M20), ``gini``
+- ``sersic_sersic_vis_radius`` (arcsec)
+- ``sersic_sersic_vis_axis_ratio``, ``sersic_sersic_vis_index``
+- ``sersic_angle`` (degrees)
+- ``flux_radius`` (pixels)
+
+Other measurements are dimensionless. The DR1 FITS schema specifies 64-bit
+integer IDs and 32-bit floating-point measurements; nulls are preserved.
+See the `DR1 morphology schema <http://st-dm.pages.euclid-sgs.uk/data-product-doc/dmdr1/merdpd/dpcards/mer_finalcatalog.html#morphology-catalog-fits-file>`_.
+
+Sync queries batch 1,000 unique IDs. ``--full-async`` uses server-side WIDE
+fallback and splits inputs above ``--async-chunk-size`` (default 500,000 unique
+IDs). Raw chunk parts retain internal partition provenance; the final output
+contains input columns and the 20 measurements/errors only. Failed downloads
+write recovery metadata (``.job.json`` or ``.manifest.json``) without writing a
+partial final table. Empty matches produce an empty table with the output schema.
+Use ``--credentials/-c`` for a credentials file and ``--verbose/-v`` for logging.
 
 crossmatch
 ----------

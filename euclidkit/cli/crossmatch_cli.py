@@ -1227,6 +1227,61 @@ def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: i
         sys.exit(1)
 
 
+@click.command(name='query-morph', short_help='Query IDR MER morphology by object ID.')
+@click.option('--input', '-i', 'input_file', required=True, type=click.Path(exists=True),
+              help='Local table containing object_id (case-insensitive).')
+@click.option('--output', '-o', required=True, type=click.Path(),
+              help='Output inner join of matched input rows and morphology.')
+@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE', show_default=True)
+@click.option('--idr-deep-partition', type=click.Choice(['survey', 'mode', 'both']),
+              default='survey', show_default=True)
+@click.option('--credentials', '-c', type=click.Path(exists=True))
+@click.option('--full-async', is_flag=True, help='Use TAP async jobs with server-side WIDE fallback.')
+@click.option('--async-chunk-size', type=click.IntRange(min=1), default=500000, show_default=True)
+@click.option('--verbose', '-v', is_flag=True)
+def query_morph(input_file, output, idr_field, idr_deep_partition, credentials,
+                full_async, async_chunk_size, verbose):
+    """Query compact MER morphology measurements and uncertainties (IDR only).
+
+    WIDE searches survey first, then mode for unmatched IDs. DEEP queries the
+    selected partitions, with survey precedence when both contain the same ID.
+    """
+    from euclidkit.core.data_access import EuclidArchive
+    from euclidkit.utils.io import load_table
+    import logging
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+    archive = None
+    try:
+        source = load_table(input_file)
+        archive = EuclidArchive(environment='IDR')
+        archive.login(credentials_file=credentials) if credentials else archive.login()
+        result = archive.query_morphology(
+            source, output_file=output, idr_field=idr_field,
+            idr_deep_partition=idr_deep_partition, full_async=full_async,
+            async_chunk_size=async_chunk_size,
+        )
+        click.echo(f'Input rows: {len(source)}')
+        if full_async:
+            if not result['results_downloaded']:
+                click.echo('Morphology results could not all be downloaded.')
+                click.echo(f"Recovery metadata: {result.get('manifest_file', result.get('job_info_file'))}")
+                return
+            click.echo(f"Matched rows: {result['result_row_count']}")
+            click.echo(f"Async jobs: {result.get('chunk_count', 0)}")
+            for job_id in result.get('job_ids', []):
+                click.echo(f'Job ID: {job_id}')
+        else:
+            click.echo(f'Matched rows: {len(result)}')
+        click.echo(f'Results saved to: {output}')
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        if archive is not None:
+            archive.logout()
+
+
 # Main command group for crossmatching functionality
 @click.group()
 def crossmatch_commands():
@@ -1238,6 +1293,7 @@ def crossmatch_commands():
 crossmatch_commands.add_command(crossmatch, name='crossmatch')
 crossmatch_commands.add_command(query_spectra, name='query-spectra') 
 crossmatch_commands.add_command(query_zspe, name='query-zspe')
+crossmatch_commands.add_command(query_morph, name='query-morph')
 crossmatch_commands.add_command(query_segmap, name='query-segmap')
 crossmatch_commands.add_command(query_cutana, name='query-cutana')
 crossmatch_commands.add_command(compile_spectra, name='compile-spectra')

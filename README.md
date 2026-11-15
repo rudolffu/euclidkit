@@ -16,6 +16,21 @@ A comprehensive Python package for Euclid archival data analysis, designed for u
 
 The package is designed for efficient archive querying and Euclid spectrum compilation workflows.
 
+## MER Morphology (IDR)
+
+Query compact morphology measurements from a local table containing Euclid
+`object_id` values (case-insensitive):
+
+```bash
+euclidkit query-morph -i sources.fits -o morphology.parquet --full-async
+```
+
+The output inner joins matched input rows with CAS, M20, Gini, VIS Sersic radius,
+axis ratio and index, Sersic angle, flux radius, and their uncertainties. WIDE
+uses survey-first fallback; DEEP supports `--idr-deep-partition survey|mode|both`
+(default `survey`). See the [CLI reference](https://euclidkit.readthedocs.io/en/latest/cli.html#query-morph)
+for units, selected columns, and async recovery.
+
 ## Installation
 
 ### Requirements

@@ -4,6 +4,34 @@ API Overview
 Core classes
 ------------
 
+MER morphology
+~~~~~~~~~~~~~~
+
+``EuclidArchive.query_morphology(source_table, output_file=None,
+idr_field="WIDE", idr_deep_partition="survey", full_async=False,
+async_chunk_size=500000)`` queries IDR morphology and inner joins matched input
+rows on case-insensitive ``object_id``. It returns an Astropy table in sync mode
+or job/manifest metadata in async mode, which requires ``output_file``.
+The input is not modified. IDs must be non-null int64 values or integer strings;
+floating-point IDs are rejected to avoid identifier precision loss.
+
+.. code-block:: python
+
+   from astropy.table import Table
+   from euclidkit.core.data_access import EuclidArchive
+
+   archive = EuclidArchive(environment="IDR")
+   archive.login()
+   try:
+       morphology = archive.query_morphology(
+           Table.read("sources.fits"), output_file="morphology.fits",
+           idr_field="DEEP", idr_deep_partition="survey",
+       )
+   finally:
+       archive.logout()
+
+See :ref:`query-morph` for fields, units, partition precedence, and async recovery.
+
 EuclidArchive
 ~~~~~~~~~~~~~
 

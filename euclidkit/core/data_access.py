@@ -2577,6 +2577,22 @@ class EuclidArchive:
         right["object_id"] = [int(value) for value in right["object_id"]]
         return join(left, right, keys="object_id", join_type="inner", metadata_conflicts="silent")
 
+    def query_morphology(
+        self, source_table: Table, output_file=None, idr_field: str = 'WIDE',
+        idr_deep_partition: str = 'survey', full_async: bool = False,
+        async_chunk_size: int = 500000,
+    ) -> Union[Table, Dict[str, Any]]:
+        """Inner join IDR MER morphology measurements to input object_id rows.
+
+        WIDE uses survey-first fallback; DEEP supports survey, mode, or both.
+        Full async requires an output path and returns job/manifest metadata.
+        """
+        from euclidkit.core.morphology import query_morphology
+        return query_morphology(
+            self, source_table, output_file, idr_field, idr_deep_partition,
+            full_async, async_chunk_size,
+        )
+
     def query_zspe_candidates(
         self,
         crossmatch_table: Optional[Table] = None,
