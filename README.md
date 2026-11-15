@@ -257,6 +257,17 @@ options.
 
 ### Building Cutana Input
 
+Preparation selects one mosaic per source/band by nearest image centre, with
+stable path tie-breakers, and records alternatives for later download. Sources
+missing bands are retained in separate band-group catalogues. Read the generated
+`.manifest.json` and run each group separately in Cutana with its available bands;
+the main CSV is a combined inventory when coverage differs. The `.coverage.csv`
+records missing bands and resolved sources with no mosaic.
+
+Download alternatives later with
+`euclidkit download-cutana-alternatives --candidates cutana_input.alternatives.csv --output-dir alternatives`
+(use the original `--environment` and appropriate `--schema` for restricted data).
+
 ```bash
 # Build Cutana CSV from a source table with object_id or ra/dec columns
 euclidkit query-cutana \

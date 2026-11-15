@@ -8,6 +8,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ## [Unreleased]
 
 ### Added
+- Deterministic per-band Cutana mosaic selection, alternative-product and coverage
+  reports, homogeneous band-group catalogues, and `download-cutana-alternatives`.
 - IDR DEEP MER partition selection via `idr_deep_partition` and
   `--idr-deep-partition` for MER crossmatch and Cutana workflows.
 - Optional empty-column pruning for crossmatch outputs via
@@ -21,6 +23,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
+- Cutana preparation now validates diameters and coordinates, guarantees unique
+  source IDs, and checks source centres against archive mosaic footprints.
 - IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by
   default, with optional `deep_mode` or `both` partition selection.
 - Non-Datalink `compile-spectra` now defaults to Parquet output with automatic

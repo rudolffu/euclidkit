@@ -19,6 +19,7 @@ from euclidkit.cli.crossmatch_cli import (
     query_morph,
     query_segmap,
     query_cutana,
+    download_cutana_alternatives,
     compile_spectra,
     compile_segmap,
     dithers_to_parquet_cli,
@@ -131,6 +132,7 @@ main.add_command(query_zspe, name='query-zspe')
 main.add_command(query_morph, name='query-morph')
 main.add_command(query_segmap, name='query-segmap')
 main.add_command(query_cutana, name='query-cutana')
+main.add_command(download_cutana_alternatives)
 main.add_command(compile_spectra, name='compile-spectra')
 main.add_command(compile_segmap, name='compile-segmap')
 main.add_command(dithers_to_parquet_cli, name='dithers-to-parquet')

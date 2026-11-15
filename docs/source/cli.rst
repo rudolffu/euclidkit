@@ -352,6 +352,64 @@ IDR DEEP example:
      --cutout-size arcsec \
      --cutout-size-value 15
 
+Cutana preparation products
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``query-cutana`` chooses one mosaic per source and band. It selects the nearest
+image centre using spherical separation, then breaks ties by full file path
+and product OID. Candidates without image-centre coordinates rank last. This
+rule is deterministic, not an exposure-depth or image-quality ranking. Exact
+duplicate file records are collapsed. Requested NISP band order is preserved;
+the default is ``NIR_Y,NIR_J,NIR_H``. Hyphens in filter names are accepted.
+
+The archive query requires the source centre to lie inside the mosaic footprint.
+Keep Cutana's FITS checks enabled: archive footprints do not replace FITS/WCS
+validation, and catalogue paths must be readable where Cutana runs.
+
+For ``cutana_input.csv`` the command also writes:
+
+* ``cutana_input.alternatives.csv``: all candidates for ambiguous source/band
+  pairs, including the selected candidate, rank, distance, archive filename,
+  paths and product OID when available.
+* ``cutana_input.coverage.csv``: resolved sources, available/missing bands and
+  whether a mosaic was found. Sources with no mosaic cannot be extracted.
+* ``cutana_input.manifest.json``: band groups, counts and companion-file paths.
+
+Sources missing some bands are retained. If available band sets differ, the
+main CSV is a combined inventory and separate ``.bands-*.csv`` files are written.
+**Run each manifest group separately in Cutana**, configuring
+``selected_extensions`` and ``channel_weights`` for that group's available
+bands. Cutana does not promise to fill missing bands: a fixed multiband channel
+configuration can reject a source missing a configured channel. When all
+sources share one band set, the manifest points to the original CSV.
+
+Diameters must be finite and positive, at most 10000 pixels or 3600 arcseconds;
+pixel diameters must be integers. Identical source/position rows collapse to
+one output source; repeated object IDs at distinct positions receive distinct
+stable IDs. Extra metadata uses the first input row for each object/position.
+Coverage reports describe sources resolved through MER, not unresolved input IDs.
+
+download-cutana-alternatives
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Download the unselected candidates later, without repeating the source query:
+
+.. code-block:: bash
+
+   euclidkit download-cutana-alternatives \
+     --candidates cutana_input.alternatives.csv \
+     --output-dir alternative_mosaics \
+     --environment IDR \
+     --schema sedm
+
+Use the original query's archive environment and the product service's schema
+(default ``sedm``). Each distinct alternative filename is downloaded once with
+Astroquery's ``get_product(file_name=...)``. Existing nonempty files are reused;
+new downloads are staged so interrupted transfers are not treated as complete.
+The alternatives table can be filtered before downloading. This command does
+not modify the prepared catalogue or automatically download mosaics during
+``query-cutana``.
+
 cutouts
 -------
 

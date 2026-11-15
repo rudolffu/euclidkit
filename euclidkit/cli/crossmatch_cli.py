@@ -538,6 +538,12 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
     import logging
     from euclidkit.core.cutouts import CutoutGenerator
     from euclidkit.utils.io import load_table
+    from euclidkit.core.cutana_catalogue import validate_size
+
+    try:
+        validate_size(cutout_size, cutout_size_value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint='--cutout-size-value') from exc
 
     if verbose:
         logging.basicConfig(level=logging.INFO)
@@ -572,6 +578,11 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
 
         click.echo(f"Cutana query completed: {len(result_df)} sources with mosaic matches")
         click.echo(f"Cutana input file saved to: {output}")
+        if result_df.attrs.get('cutana_manifest'):
+            click.echo(f"Cutana manifest: {result_df.attrs['cutana_manifest']}")
+            groups = result_df.attrs.get('cutana_groups', [])
+            if len(groups) > 1:
+                click.echo('Band coverage differs: run each manifest group separately in Cutana.')
     except Exception as e:
         click.echo(f"Error generating Cutana input: {e}", err=True)
         sys.exit(1)
@@ -1282,6 +1293,28 @@ def query_morph(input_file, output, idr_field, idr_deep_partition, credentials,
             archive.logout()
 
 
+@click.command(name='download-cutana-alternatives', short_help='Download alternate Cutana mosaics.')
+@click.option('--candidates', required=True, type=click.Path(exists=True),
+              help='The .alternatives.csv written by query-cutana.')
+@click.option('--output-dir', required=True, type=click.Path())
+@click.option('--schema', default='sedm', show_default=True, help='Archive product schema.')
+@click.option('--environment', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']), default='PDR')
+@click.option('--credentials', type=click.Path(exists=True))
+def download_cutana_alternatives(candidates, output_dir, schema, environment, credentials):
+    """Download distinct unselected mosaic files, resuming existing nonempty files."""
+    from euclidkit.core.cutana_catalogue import download_alternatives
+    from euclidkit.core.data_access import EuclidArchive
+    archive = EuclidArchive(environment=environment)
+    try:
+        archive.login(credentials_file=credentials) if credentials else archive.login()
+        paths = download_alternatives(archive, candidates, output_dir, schema)
+        click.echo(f'Alternative files available: {len(paths)}')
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        archive.logout()
+
+
 # Main command group for crossmatching functionality
 @click.group()
 def crossmatch_commands():
@@ -1296,6 +1329,7 @@ crossmatch_commands.add_command(query_zspe, name='query-zspe')
 crossmatch_commands.add_command(query_morph, name='query-morph')
 crossmatch_commands.add_command(query_segmap, name='query-segmap')
 crossmatch_commands.add_command(query_cutana, name='query-cutana')
+crossmatch_commands.add_command(download_cutana_alternatives)
 crossmatch_commands.add_command(compile_spectra, name='compile-spectra')
 crossmatch_commands.add_command(compile_segmap, name='compile-segmap')
 crossmatch_commands.add_command(dithers_to_parquet_cli, name='dithers-to-parquet')

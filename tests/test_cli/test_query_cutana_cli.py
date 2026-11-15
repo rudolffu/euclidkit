@@ -190,3 +190,44 @@ class TestQueryCutanaCLI:
             os.unlink(sources_file)
             if os.path.exists(output_file.name):
                 os.unlink(output_file.name)
+
+
+def test_query_cutana_rejects_invalid_size_before_login(tmp_path):
+    source = tmp_path / 'sources.csv'
+    source.write_text('object_id\n1\n')
+    with patch('euclidkit.core.cutouts.CutoutGenerator') as generator:
+        result = CliRunner().invoke(query_cutana, ['--sources', str(source), '--output',
+            str(tmp_path/'out.csv'), '--cutout-size', 'pixel', '--cutout-size-value', '1.5'])
+    assert result.exit_code != 0
+    assert 'must be an integer' in result.output
+    generator.assert_not_called()
+
+
+def test_query_cutana_reports_group_manifest(tmp_path):
+    source = tmp_path/'sources.csv'
+    source.write_text('object_id\n1\n')
+    frame = pd.DataFrame({'SourceID': ['OBJ_1']})
+    frame.attrs['cutana_manifest'] = 'out.manifest.json'
+    frame.attrs['cutana_groups'] = [{'bands': ['NIR_Y']}, {'bands': ['NIR_Y', 'NIR_H']}]
+    generator = Mock()
+    generator.generate_cutana_input.return_value = frame
+    with patch('euclidkit.core.cutouts.CutoutGenerator', return_value=generator):
+        result = CliRunner().invoke(query_cutana, ['--sources', str(source), '--output',
+                                                  str(tmp_path/'out.csv')])
+    assert result.exit_code == 0, result.output
+    assert 'out.manifest.json' in result.output
+    assert 'run each manifest group separately' in result.output
+
+
+def test_download_cutana_alternatives_cli(tmp_path):
+    from euclidkit.cli.crossmatch_cli import download_cutana_alternatives
+    source = tmp_path/'alternatives.csv'
+    source.write_text('selected,file_name\nFalse,other.fits\n')
+    with patch('euclidkit.core.data_access.EuclidArchive') as archive_class, \
+         patch('euclidkit.core.cutana_catalogue.download_alternatives', return_value=['other.fits']) as download:
+        result = CliRunner().invoke(download_cutana_alternatives, ['--candidates', str(source),
+            '--output-dir', str(tmp_path/'files'), '--environment', 'IDR', '--schema', 'dr1'])
+    assert result.exit_code == 0, result.output
+    archive_class.assert_called_once_with(environment='IDR')
+    download.assert_called_once_with(archive_class.return_value, str(source), str(tmp_path/'files'), 'dr1')
+    archive_class.return_value.logout.assert_called_once()

@@ -154,6 +154,19 @@ class CutoutGenerator:
         This workflow is adapted from the Bulk_mosaic_cutouts notebook by
         Kristin Anett Remmelgas.
 
+        Candidates must contain the source centre in their archive footprint.
+        For each source and band, the nearest image centre wins; equal distances
+        use full path and product OID as deterministic tie-breakers. Missing
+        image centres rank last. This is a reproducibility rule, not a quality
+        or deepest-exposure ranking. Cutana should still validate FITS footprints.
+
+        Alongside the CSV, write ``.alternatives.csv``, ``.coverage.csv`` and
+        ``.manifest.json``. Sources with partial band coverage are retained.
+        When band sets differ, the main CSV is a combined inventory; run the
+        band-group CSVs listed in the manifest separately in Cutana, configuring
+        channels for each group's available bands. Sources with no mosaic are
+        recorded in coverage but cannot be extracted.
+
         Parameters
         ----------
         sources : str, DataFrame, Table, List[Dict], or Dict
@@ -190,6 +203,14 @@ class CutoutGenerator:
         if instrument_name != 'NISP' and nisp_filters:
             raise ValueError("nisp_filters can only be used with instrument_name='NISP'")
 
+        from euclidkit.core.cutana_catalogue import validate_size, write_catalogue
+        size = validate_size(unit, cutout_size_value)
+        bands = ['VIS'] if instrument_name == 'VIS' else list(dict.fromkeys(
+            f.replace('-', '_') for f in (nisp_filters or ['NIR_Y', 'NIR_J', 'NIR_H'])))
+        allowed = {'VIS'} if instrument_name == 'VIS' else {'NIR_Y', 'NIR_J', 'NIR_H'}
+        if not bands or any(b not in allowed for b in bands):
+            raise ValueError('Unrecognised filter name')
+
         df_input = self._normalize_sources(sources)
         if len(df_input) == 0:
             raise ValueError("No sources found in input")
@@ -212,7 +233,7 @@ class CutoutGenerator:
         df_files = self._get_files_mosaic_from_segmentation(
             df_coords,
             instrument_name=instrument_name,
-            nisp_filters=nisp_filters,
+            nisp_filters=bands if instrument_name == 'NISP' else None,
             radec_colnames=radec_colnames,
         )
         if len(df_files) == 0:
@@ -222,62 +243,11 @@ class CutoutGenerator:
                 f"Second query was:\n{query_msg}"
             )
 
-        df_files = df_files.copy()
-        df_files['fits_file_paths'] = (
-            df_files['datalabs_path'].astype(str).str.rstrip('/')
-            + '/'
-            + df_files['file_name'].astype(str)
+        return write_catalogue(
+            df_files, df_coords, output_file, ra_col, dec_col, bands, unit, size,
+            keep_columns=not drop_noncutana_cols,
+            environment=getattr(self.archive, 'environment', None),
         )
-
-        # Build a stable source identifier for Cutana rows.
-        if 'object_id' in df_files.columns:
-            source_ids = df_files['object_id'].astype(str)
-            df_files['SourceID'] = 'OBJ_' + source_ids.str.replace(r'\.0$', '', regex=True)
-        else:
-            df_files['SourceID'] = (
-                'SRC_'
-                + df_files[ra_col].astype(str).str.replace('.', '', regex=False)
-                + '_'
-                + df_files[dec_col].astype(str).str.replace('.', '', regex=False)
-            )
-
-        group_cols = ['SourceID', ra_col, dec_col]
-        if 'object_id' in df_files.columns:
-            group_cols.append('object_id')
-
-        df_cutana = (
-            df_files[group_cols + ['fits_file_paths']]
-            .groupby(group_cols, as_index=False)['fits_file_paths']
-            .agg(lambda values: str(sorted(set(values))))
-        )
-
-        df_cutana.insert(
-            loc=3,
-            column=f'diameter_{unit}',
-            value=float(cutout_size_value),
-        )
-
-        if not drop_noncutana_cols:
-            keep_cols = [c for c in df_coords.columns if c not in df_cutana.columns]
-            if keep_cols:
-                df_cutana = df_cutana.merge(
-                    df_coords[[ra_col, dec_col] + keep_cols].drop_duplicates(),
-                    on=[ra_col, dec_col],
-                    how='left',
-                )
-
-        df_cutana = df_cutana.rename(columns={ra_col: 'RA', dec_col: 'Dec'})
-
-        output_path = Path(output_file)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        df_cutana.to_csv(output_path, index=False)
-
-        logger.info(
-            "Created Cutana input with %d sources at %s",
-            len(df_cutana),
-            output_path,
-        )
-        return df_cutana
     
     def _normalize_sources(self, sources) -> pd.DataFrame:
         """Convert various source input formats to standardized DataFrame."""
@@ -667,6 +637,8 @@ class CutoutGenerator:
           ON mosaics.tile_index = u.tile_index
         WHERE mosaics.datalabs_path IS NOT NULL
           AND mosaics.instrument_name='{instrument_name}'
+          AND mosaics.fov IS NOT NULL
+          AND CONTAINS(POINT('ICRS', u.{ra_col}, u.{dec_col}), mosaics.fov)=1
         """
 
         if instrument_name == 'NISP' and nisp_filters:
