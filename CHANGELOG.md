@@ -25,6 +25,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
+- Python 3.11 or later is now required (`requires-python = ">=3.11"`); the
+  documentation already stated this, and the metadata previously allowed 3.9.
 - Documentation rewritten for astronomers: task-based guides for catalogues,
   spectra, image cutouts and segmentation maps, a command reference, and a
   glossary. The README is now a short overview that links to the full docs.
@@ -44,6 +46,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `tile_index`, matching `query-segmap`.
 
 ### Fixed
+- Removed the `euclidkit-spectra`, `euclidkit-composite` and `euclidkit-pipeline`
+  console scripts, which pointed to modules that were never shipped.
+- `euclidkit diagnostics --check-data` now looks for the credentials file in the
+  configured location (default `~/.euclidkit/.cred.txt`) instead of only
+  `/media/user/cred.txt`, and reports which data volumes it found.
+- `euclidkit diagnostics --check-data` and `--check-desi` no longer crash with
+  `UnboundLocalError` when run without `--check-deps`.
+- Package `__license__` now reads BSD-3-Clause, matching `LICENSE`; `requirements.txt`
+  now lists `pyarrow`.
 - Local FITS compilation now copies a reused source HDU before assigning row-specific
   headers, preserving identifiers and coordinates for repeated HDU references.
 - Compiled FITS `NSPECTRA` now counts written extensions after missing inputs are skipped.

@@ -20,7 +20,7 @@ _lazy_modules = {
 # Package metadata
 __author__ = "Yuming Fu"
 __email__ = "fuympku@outlook.com" 
-__license__ = "GPLv3"
+__license__ = "BSD-3-Clause"
 __url__ = "https://github.com/rudolffu/euclidkit"
 
 # Lazy module loading to avoid heavy network-bound imports at CLI startup.

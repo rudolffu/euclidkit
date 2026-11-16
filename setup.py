@@ -6,8 +6,8 @@ import sys
 from setuptools import setup
 
 
-if sys.version_info < (3, 9):
-    raise RuntimeError("euclidkit requires Python 3.9 or later")
+if sys.version_info < (3, 11):
+    raise RuntimeError("euclidkit requires Python 3.11 or later")
 
 
 if __name__ == "__main__":

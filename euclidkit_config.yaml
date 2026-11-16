@@ -1,6 +1,6 @@
 data:
-  credentials_file: /media/user/cred.txt
-  cache_dir: /Users/yuming/.euclidkit/cache
+  credentials_file: /home/<user>/.euclidkit/.cred.txt
+  cache_dir: /home/<user>/.euclidkit/cache
 analysis:
   redshift:
     method: xcorr

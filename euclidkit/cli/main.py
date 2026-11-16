@@ -11,7 +11,7 @@ import yaml
 from typing import Optional
 
 from euclidkit.version import __version__
-from euclidkit.config import generate_config_template
+from euclidkit.config import config, generate_config_template
 from euclidkit.cli.crossmatch_cli import (
     crossmatch,
     query_spectra,
@@ -82,27 +82,49 @@ def diagnostics(check_deps: bool, check_data: bool, check_desi: bool):
     # Check dependencies
     if check_deps:
         try:
-            import numpy, scipy, matplotlib, astropy, astroquery, pandas, pyarrow
-            import photutils, sep, skimage, tqdm, yaml, click, requests
+            # importlib keeps these names out of the function scope: a plain
+            # ``import click`` here would shadow the module-level ``click``.
+            import importlib
+            for name in ('numpy', 'scipy', 'matplotlib', 'astropy', 'astroquery', 'pandas',
+                         'pyarrow', 'photutils', 'sep', 'skimage', 'tqdm', 'yaml', 'click',
+                         'requests'):
+                importlib.import_module(name)
             results['dependencies'] = {'passed': True, 'message': 'All core dependencies found'}
         except ImportError as e:
             results['dependencies'] = {'passed': False, 'message': f'Missing dependency: {e}'}
     
     # Check data access
     if check_data:
-        q1_path = Path('/data/euclid_q1/')
-        ero_path = Path('/data/euc_ero_data_01/')
-        cred_path = Path('/media/user/cred.txt')
-        
-        if q1_path.exists() and ero_path.exists():
-            results['data_access'] = {'passed': True, 'message': 'Euclid data volumes accessible'}
+        # Only the Q1 and ERO mount points are known here; DR1 file locations come
+        # from the datalabs_path column of archive query results.
+        volumes = [Path('/data/euclid_q1/'), Path('/data/euc_ero_data_01/')]
+        found = [str(v) for v in volumes if v.exists()]
+        if found:
+            results['data_access'] = {
+                'passed': True,
+                'message': f"Euclid data volumes found: {', '.join(found)}",
+            }
         else:
-            results['data_access'] = {'passed': False, 'message': 'Euclid data volumes not found (expected on ESA Datalabs)'}
-        
-        if cred_path.exists():
-            results['credentials'] = {'passed': True, 'message': 'Credentials file found'}
+            results['data_access'] = {
+                'passed': False,
+                'message': 'Q1/ERO data volumes not found (expected only on ESA Datalabs)',
+            }
+
+        # Same lookup order as EuclidArchive.login, plus the common Datalabs path.
+        candidates = [
+            os.environ.get('EUCLIDKIT_CREDENTIALS_FILE'),
+            config.get('data.credentials_file'),
+            '/media/user/cred.txt',
+        ]
+        candidates = [str(Path(c).expanduser()) for c in candidates if c]
+        cred_found = next((c for c in candidates if Path(c).exists()), None)
+        if cred_found:
+            results['credentials'] = {'passed': True, 'message': f'Credentials file found at {cred_found}'}
         else:
-            results['credentials'] = {'passed': False, 'message': 'Credentials file not found at /media/user/cred.txt'}
+            results['credentials'] = {
+                'passed': False,
+                'message': 'Credentials file not found (looked in ' + ', '.join(dict.fromkeys(candidates)) + ')',
+            }
     
     # Check DESI integration
     if check_desi:
