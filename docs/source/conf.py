@@ -30,7 +30,8 @@ extensions = [
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-html_theme = os.environ.get("SPHINX_THEME", "sphinx_rtd_theme")
+html_theme = os.environ.get("SPHINX_THEME", "furo")
+html_title = "euclidkit"
 html_static_path = ["_static"]
 
 master_doc = "index"

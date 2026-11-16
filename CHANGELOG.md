@@ -27,6 +27,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 - Python 3.11 or later is now required (`requires-python = ">=3.11"`); the
   documentation already stated this, and the metadata previously allowed 3.9.
+- Documentation theme changed from Read the Docs to Furo, which wraps wide
+  tables instead of clipping them.
 - Documentation rewritten for astronomers: task-based guides for catalogues,
   spectra, image cutouts and segmentation maps, a command reference, and a
   glossary. The README is now a short overview that links to the full docs.
