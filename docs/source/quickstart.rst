@@ -1,119 +1,137 @@
 Quickstart
 ==========
 
-Basic CLI workflow
-------------------
+This example starts from a list of quasar candidates with sky positions and
+ends with their Euclid photometry and NISP spectra. It uses the public DR1
+release and the WIDE field, which are the defaults.
 
-Crossmatch sources:
+Before you start, :doc:`install euclidkit <installation>` and
+:doc:`set up your credentials <configuration>`.
 
-.. code-block:: bash
+Steps 1 to 3 run on any computer. Step 4 reads the Euclid data volumes, so run
+it in an ESA Datalabs session.
 
-   euclidkit crossmatch \
-     --input my_sources.csv \
-     --output crossmatch_results.fits \
-     --radius 1.0 \
-     --environment PDR
+Prepare the input table
+-----------------------
 
-For public DR1 DEEP MER data, the default partition is ``survey``. Use
-``--deep-partition mode`` for CDFS/COSMOS, or ``both`` to query survey
-first and mode second:
+Create ``my_sources.csv`` with one row per target. Coordinates are in degrees
+(ICRS):
 
-.. code-block:: bash
+.. code-block:: text
 
-   euclidkit crossmatch \
-     --input my_deep_sources.fits \
-     --output deep_crossmatch_results.fits \
-     --environment PDR --release DR1 \
-     --field DEEP \
-     --deep-partition both
+   name,ra,dec
+   target_a,51.8975,-35.1766
+   target_b,152.1781,68.8275
 
-Query spectra for crossmatched objects:
+These two example positions lie inside the DR1 WIDE footprint. Replace them
+with your own targets. FITS, VOTable, ECSV, and Parquet tables also work. If your columns have other
+names, pass ``--ra-col`` and ``--dec-col``.
 
-.. code-block:: bash
+Step 1: Keep the sources inside the Euclid footprint
+----------------------------------------------------
 
-   euclidkit query-spectra \
-     --crossmatch crossmatch_results.fits \
-     --output spectra_sources.fits
-
-Query segmentation-map metadata from MER crossmatch results:
+This step is optional, but it saves archive time for large lists. It uses a
+footprint map shipped with the package and needs no login:
 
 .. code-block:: bash
 
-   euclidkit query-segmap \
-     --input crossmatch_results.fits \
-     --output segmentation_maps.fits \
-     --environment PDR --release DR1
+   euclidkit select-footprint -i my_sources.csv -o in_footprint.csv --survey wide
 
-The result is the input for local 10 arcsec segmentation-map cutouts:
+Step 2: Crossmatch with the MER catalogue
+-----------------------------------------
 
 .. code-block:: bash
 
-   euclidkit compile-segmap \
-     --input segmentation_maps.fits \
-     --output-dir ./segmap_cutouts
+   euclidkit crossmatch -i in_footprint.csv -o matches.fits --radius 1.0
 
-The command opens local ``datalabs_path`` + ``file_name`` FITS files from the
-``query-segmap`` table and writes one raw-label FITS cutout per source row. See
-:doc:`segmentation_maps` for required columns, table mapping, and output
-semantics.
+``matches.fits`` contains your input columns plus, for each matched Euclid
+object:
 
-Export local Datalabs spectra to raw Parquet parts. This is the default
-non-Datalink ``compile-spectra`` output; Datalink still writes FITS files.
+- ``object_id``, the Euclid identifier that all later steps use
+- ``mer_ra``, ``mer_dec``, and ``separation_arcsec``
+- VIS and NISP fluxes with errors, and fluxes in the ground-based bands
+- quality flags, ``point_like_prob``, and ``extended_prob``
+- ``segmentation_map_id``, which the segmentation-map workflow needs
 
-.. code-block:: bash
+See :ref:`crossmatch-guide` for DEEP fields, object-ID matching, and tables
+with millions of rows.
 
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix raw_spectra \
-     --chunk-size 2000 \
-     -L RGS
-
-Export per-dither spectra from the same local Datalabs catalog rows:
+Step 3: Find the spectra
+------------------------
 
 .. code-block:: bash
 
-   euclidkit dithers-to-parquet \
-     --catalog-table spectra_sources.fits \
-     --output-prefix ./output/raw_sir \
-     --lambda-range RGS
+   euclidkit query-spectra -x matches.fits -o spectra_sources.fits
 
-Compile both Euclid arms via datalink (RGS + BGS):
+``spectra_sources.fits`` has one row per available spectrum. Each row records
+which FITS file holds the spectrum and which extension to read. Objects with
+no spectrum do not appear.
+
+Step 4: Export the spectra (on Datalabs)
+----------------------------------------
 
 .. code-block:: bash
 
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_dl \
-     --use-datalink \
-     --environment PDR --release DR1 \
-     -L BOTH
+   euclidkit compile-spectra -s spectra_sources.fits -o ./spectra \
+     --prefix qso -L RGS
 
-Python API example
-------------------
+This writes the red-grism (RGS) spectra to ``./spectra/qso_part001.parquet``
+and following parts, with a manifest file that records what was exported.
+
+If you are not on Datalabs, add ``--use-datalink`` to download the spectra
+through the archive instead. That mode writes FITS files. See
+:doc:`spectra_compilation`.
+
+Step 5: Read the spectra
+------------------------
+
+Each Parquet row is one spectrum. The array columns hold the full spectrum:
+
+.. code-block:: python
+
+   import matplotlib.pyplot as plt
+   import pandas as pd
+
+   spectra = pd.read_parquet("spectra/qso_part001.parquet")
+   row = spectra.iloc[0]
+
+   plt.plot(row["wavelength"], row["flux"])
+   plt.title(f"Euclid object {row['object_id']}")
+   plt.show()
+
+The same workflow in Python
+---------------------------
 
 .. code-block:: python
 
    from euclidkit.core.data_access import EuclidArchive
+   from euclidkit.core.spectra_parquet import spectra_to_parquet
 
-   archive = EuclidArchive(environment="PDR")
-   archive.login(credentials_file="~/.euclidkit/.cred.txt")
+   archive = EuclidArchive()          # public DR1
+   archive.login()                    # reads ~/.euclidkit/.cred.txt
 
-   xmatch = archive.crossmatch_sources(
-       user_table="my_sources.csv",
-       radius=1.0,
-       output_file="crossmatch_results.fits",
+   matches = archive.crossmatch_sources(
+       user_table="in_footprint.csv",
+       radius=1.0,                    # arcsec
+       output_file="matches.fits",
    )
-
-   deep_xmatch = archive.crossmatch_sources(
-       user_table="my_deep_sources.fits",
-       output_file="deep_crossmatch_results.fits",
-       idr_field="DEEP",
-       idr_deep_partition="survey",
-   )
-
-   spectra = archive.query_spectra_sources(
-       crossmatch_table=xmatch,
+   spectra_sources = archive.query_spectra_sources(
+       crossmatch_table=matches,
        output_file="spectra_sources.fits",
    )
+   archive.logout()
+
+   # On Datalabs
+   stats = spectra_to_parquet(
+       catalog_table="spectra_sources.fits",
+       output_prefix="./spectra/qso",
+       lambda_range="RGS",
+   )
+   print(stats.exported_rows, "spectra written")
+
+Where to go next
+----------------
+
+- Add morphology or redshifts to your table: :doc:`catalogues`
+- Work in the DEEP fields or with Q1: :doc:`environments`
+- Make image cutouts: :doc:`cutouts`

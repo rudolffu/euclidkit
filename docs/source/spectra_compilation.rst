@@ -1,266 +1,252 @@
-Spectra Compilation
-===================
+Spectra
+=======
 
-Typical workflow
+This guide shows how to collect the NISP slitless spectra of your sources. It
+takes two steps:
+
+1. ``query-spectra`` asks the archive which of your sources have spectra and
+   where the files are.
+2. ``compile-spectra`` reads those spectra and writes them into a few large
+   files.
+
+.. code-block:: bash
+
+   euclidkit query-spectra -x my_sources.fits -o spectra_sources.fits
+   euclidkit compile-spectra -s spectra_sources.fits -o ./output \
+     --prefix raw_spectra -L RGS
+
+Choose how to read the spectra
+------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 22 22 32
+
+   * - Mode
+     - Where it runs
+     - Output
+     - Use it when
+   * - Local Parquet (default)
+     - ESA Datalabs
+     - Parquet tables
+     - You want many spectra quickly for analysis or machine learning
+   * - Local FITS (``--output-format fits``)
+     - ESA Datalabs
+     - Multi-extension FITS
+     - Your tools expect one FITS extension per spectrum
+   * - Datalink (``--use-datalink``)
+     - Any computer
+     - Multi-extension FITS
+     - You are not on Datalabs. It is slower, because each spectrum is
+       downloaded from the archive.
+
+Step 1: Find the spectra
+------------------------
+
+``query-spectra`` accepts any table with Euclid object IDs or with positions.
+A ``crossmatch`` output works, but you do not need one.
+
+By object ID:
+
+.. code-block:: bash
+
+   euclidkit query-spectra -x my_ids.fits -o spectra_sources.fits \
+     --match-mode object-id
+
+By position, within 1 arcsec:
+
+.. code-block:: bash
+
+   euclidkit query-spectra -x my_positions.fits -o spectra_sources.fits \
+     --match-mode spatial --radius 1.0
+
+With the default ``--match-mode auto``, ``euclidkit`` uses object IDs if the
+table has an ``object_id`` or ``object_id_euclid`` column, and positions
+otherwise.
+
+Things to know:
+
+- **Object-ID mode** reads the ``object_id`` column. If your IDs are in a
+  column called ``source_id``, rename it to ``object_id`` first.
+- **Spatial mode** keeps only the nearest spectrum for each input row. It
+  finds coordinate columns named ``ra``/``dec``, and also common variants such
+  as ``RA``/``DEC``, ``right_ascension``/``declination``,
+  ``ra_deg``/``dec_deg``, and ``RAJ2000``/``DEJ2000``. Use ``--ra-col`` and
+  ``--dec-col`` for anything else.
+- **WIDE or DEEP**: for DR1, ``--field WIDE`` (default) and ``--field DEEP``
+  query different spectra tables. See :doc:`environments`.
+- Spectra that have no file on the Datalabs volumes are left out.
+
+The output has one row per spectrum:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Columns
+     - Content
+   * - ``object_id``, ``source_id``
+     - Euclid identifier of the object
+   * - ``ra_obj``, ``dec_obj``
+     - Position of the spectrum's source, in degrees
+   * - ``datalabs_path``, ``file_name``, ``hdu_index``
+     - The FITS file on the Datalabs volumes, and the extension that holds
+       this spectrum
+   * - ``input_row_id``, ``input_ra``, ``input_dec``, ``separation_arcsec``
+     - Spatial mode only: the input row that matched, and the match distance
+
+To also write the spectra into one FITS file in the same call, add
+``--combine-output combined.fits``. ``--max-spectra N`` limits how many are
+included. This needs the Datalabs volumes.
+
+Step 2: Export to Parquet (default)
+-----------------------------------
+
+Run this on ESA Datalabs:
+
+.. code-block:: bash
+
+   euclidkit compile-spectra -s spectra_sources.fits -o ./output \
+     --prefix raw_spectra --chunk-size 2000 --workers 8 -L RGS
+
+This writes:
+
+- ``raw_spectra_part001.parquet``, ``raw_spectra_part002.parquet``, and so on,
+  with ``--chunk-size`` spectra per file (default 2000)
+- ``raw_spectra_manifest.json``, which records the settings, the release, the
+  row counts, and the list of output files
+- ``raw_spectra_failures.jsonl``, only if you use ``--on-error skip`` and some
+  rows fail
+
+Each Parquet row is one spectrum, with these columns:
+
+- ``object_id``, ``source_id``, ``ra``, ``dec``
+- ``wavelength`` and ``flux`` arrays. ``flux`` is a copy of the ``signal``
+  column.
+- every other array column of the spectrum's FITS extension, unchanged
+
+The exporter writes the archive values as they are. It does not compute an
+error array, an inverse variance, or a validity mask. For the meaning and
+units of each column, see the SIR combined-spectra product description in the
+`Euclid DR1 Data Product Description <https://euclid.esac.esa.int/dr/dr1/dpdd/>`_.
+
+Useful options:
+
+- ``--workers N`` sets the number of parallel readers. The default is the
+  number of CPU cores, up to 8.
+- ``--limit N`` processes only the first ``N`` rows, for a quick test.
+- ``--on-error skip`` continues past unreadable spectra. The default,
+  ``fail``, stops at the first one.
+- ``--overwrite`` is required if output files with the same prefix exist.
+
+Choose the grism
 ----------------
 
-The spectra workflow starts with an input table that contains either Euclid
-spectral source IDs in an ``object_id`` column or sky coordinates. A MER
-crossmatch table is one valid input, but it is not required.
+``-L`` (``--lambda-range``) selects the grism:
 
-If your table already contains an ``object_id`` column whose values correspond
-to ``spectra_source.source_id``, query by object ID:
+- ``-L RGS``: red grism (default)
+- ``-L BGS``: blue grism
+- ``-L BOTH``: both, written as two separate sets of files,
+  ``<prefix>_rgs_*`` and ``<prefix>_bgs_*``
 
-.. code-block:: bash
+In the local modes, the grism of each spectrum is read from the ``LRANGE``
+keyword in the FITS primary header.
 
-   euclidkit query-spectra \
-     --crossmatch my_spectral_ids.fits \
-     --output spectra_sources.fits \
-     --match-mode object-id \
-     --environment PDR --release DR1 \
-     --field WIDE
-
-If your table only has positions, query by coordinates:
-
-.. code-block:: bash
-
-   euclidkit query-spectra \
-     --crossmatch my_coordinates.fits \
-     --output spectra_sources.fits \
-     --match-mode spatial \
-     --radius 1.0 \
-     --environment PDR --release DR1 \
-     --field WIDE
-
-Then compile the returned spectra-source catalogue:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix raw_spectra \
-     -L RGS
-
-``query-spectra`` is the bridge between an ID/coordinate table and spectrum
-file access. It queries the archive spectra-source table by either an uploaded
-``object_id`` key joined to ``spectra_source.source_id`` or by matching input
-coordinates to ``ra_obj``/``dec_obj``, then writes a spectra-source catalogue
-with the local Datalabs file information needed by ``compile-spectra``. If you
-do not already have this spectra-source catalogue, generate it with the
-`query-spectra CLI
-<https://euclidkit.readthedocs.io/en/latest/cli.html#query-spectra>`__ before
-running ``compile-spectra``.
-
-``query-spectra`` matching
+Export to FITS on Datalabs
 --------------------------
 
-``query-spectra`` supports ``--match-mode auto|object-id|spatial``. Auto mode
-uses object-ID matching when ``object_id`` or ``object_id_euclid`` exists, and
-otherwise uses spatial matching when RA/Dec columns can be resolved.
+.. code-block:: bash
 
-- Object-ID mode uploads unique IDs as a temporary ``object_id`` column and
-  joins ``spectra_source.source_id = uploaded.object_id``.
-- If your input column is named ``source_id`` rather than ``object_id``, rename
-  or copy it to ``object_id`` before running ``query-spectra``; in this context
-  ``object_id`` is the uploaded key used to join against
-  ``spectra_source.source_id``.
-- Spatial mode matches input coordinates to ``spectra_source.ra_obj`` and
-  ``spectra_source.dec_obj`` within ``--radius`` arcsec, default ``1.0``.
-- Spatial mode keeps only the nearest spectra-source row per input row.
-- Spatial coordinate columns are resolved using exact ``--ra-col``/``--dec-col``
-  names first, then case-insensitive matches and common aliases such as
-  ``RA``/``DEC``, ``right_ascension``/``declination``,
-  ``ra_deg``/``dec_deg``, ``RAJ2000``/``DEJ2000``, and
-  ``ra_euclid``/``dec_euclid``.
-- Rows without ``datalabs_path`` are excluded from the output.
+   euclidkit compile-spectra -s spectra_sources.fits -o ./output \
+     --prefix compiled_spectra --output-format fits --max-extensions 1000
 
-The output contains the columns needed by local and Datalink compilation,
-including ``source_id``, ``object_id``, ``ra_obj``, ``dec_obj``,
-``datalabs_path``, ``file_name``, and ``hdu_index``. Spatial mode also includes
-``input_row_id``, ``input_ra``, ``input_dec``, and ``separation_arcsec``; its
-``object_id`` is set from the matched ``source_id`` so the result can be passed
-directly to ``compile-spectra``.
+This writes ``compiled_spectra_chunk_001.fits`` and so on. Each file holds up
+to ``--max-extensions`` spectra, one per extension, and each extension header
+carries the source ID in ``SOURC_ID``. A metadata table lists which spectrum
+is in which file and extension.
 
-Default Parquet mode (local Datalabs FITS paths)
-------------------------------------------------
+If chunk files already exist, the run resumes after the last compiled
+spectrum. Add ``--overwrite`` to start again. This mode uses one worker unless
+you set ``--workers``.
 
-Non-Datalink ``compile-spectra`` is a local Datalabs workflow. It reads each row
-from the spectra-source catalogue, combines ``datalabs_path`` and ``file_name``
-to locate the FITS file, opens the requested ``hdu_index``, and writes the raw
-spectrum arrays to chunked Parquet files. This is the default output mode.
+Download through Datalink
+-------------------------
 
-If you do not already have ``spectra_sources.fits``, create it first from an
-ID table or coordinate table:
+Outside Datalabs, add ``--use-datalink``. ``euclidkit`` then requests each
+spectrum from the archive by source ID. This needs your credentials.
 
 .. code-block:: bash
 
-   euclidkit query-spectra \
-     --crossmatch my_spectral_ids_or_coordinates.fits \
-     --output spectra_sources.fits \
-     --environment PDR --release DR1 \
-     --field WIDE
+   euclidkit compile-spectra -s spectra_sources.fits -o ./output \
+     --prefix compiled_dl --use-datalink -L BOTH
 
-Then export the local Datalabs spectra:
+The output is always FITS:
+
+- ``compiled_dl_rgs_chunk_###.fits``
+- ``compiled_dl_bgs_chunk_###.fits``
+
+The archive schema follows the release, for example ``dr1`` for public DR1.
+Override it with ``--schema`` if you need to. The older ``--retrieval-type``
+option still works, but ``-L`` is the preferred way to select the grism.
+
+.. _dithers-guide:
+
+Export the individual dither spectra
+------------------------------------
+
+The archive's combined spectrum is a stack of several dithered exposures.
+``dithers-to-parquet`` exports the combined spectrum together with each
+single-dither spectrum. Use it to study variability between exposures, or to
+check whether a feature appears in every dither.
+
+Run this on ESA Datalabs. It also needs archive credentials, to look up the
+observation time of each exposure.
 
 .. code-block:: bash
 
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix raw_spectra \
-     --chunk-size 2000 \
-     --workers 8 \
-     -L RGS
+   euclidkit dithers-to-parquet --catalog-table spectra_sources.fits \
+     --output-prefix ./output/raw_sir --lambda-range RGS --workers 8
 
 This writes:
 
-- ``raw_spectra_part001.parquet``, ...
-- ``raw_spectra_manifest.json``
-- ``raw_spectra_failures.jsonl`` only when ``--on-error skip`` records failures
-
-Parquet rows include ``object_id``, ``source_id``, ``ra``, ``dec``, raw array
-columns from the FITS HDU, ``wavelength``, and ``flux`` as an alias of
-``signal``. Derived ``err``, ``valid``, and ``ivar`` columns are intentionally
-not written.
-
-The Parquet exporter is intended for bulk machine-learning or table-processing
-workflows where direct array columns are easier to consume than multi-extension
-FITS files. Worker count defaults to ``min(os.cpu_count(), 8)`` when
-``--workers`` is omitted.
-
-Arm selection
--------------
-
-In Parquet mode, ``-L/--lambda-range`` filters using the FITS primary ``LRANGE``
-header. ``-L BOTH`` runs separate RGS and BGS exports:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix raw_spectra \
-     -L BOTH
-
-This writes separate ``raw_spectra_rgs_*`` and ``raw_spectra_bgs_*`` Parquet
-families. XML LambdaRange annotation is not used in Parquet mode; the FITS
-headers are the source of truth.
-
-Legacy local FITS mode
-----------------------
-
-Use ``--output-format fits`` to keep the previous local multi-extension FITS
-compiler. This path still reads local ``datalabs_path`` + ``file_name`` FITS
-files, but writes FITS chunks instead of Parquet parts.
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_spectra \
-     --output-format fits \
-     --max-extensions 1000
-
-The legacy FITS path supports public DR1 DEEP XML LambdaRange annotation and FITS
-metadata output. Resume behavior applies when output chunk files already exist
-and ``--overwrite`` is not provided. FITS compatibility mode defaults to one
-worker.
-
-Datalink mode
--------------
-
-Use ``--use-datalink`` to retrieve spectra through the Euclid archive Datalink
-service instead of reading local Datalabs files. This path uses the
-spectra-source rows and source identifiers to request spectra from the archive
-client, then writes multi-extension FITS chunks. It remains FITS-only and
-ignores the local ``--output-format parquet`` default.
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_dl \
-     --use-datalink \
-     -L BOTH \
-     --environment PDR --release DR1 \
-     --schema dr1
-
-In Datalink mode, ``-L RGS`` maps to ``SPECTRA_RGS`` retrieval,
-``-L BGS`` maps to ``SPECTRA_BGS`` retrieval, and ``-L BOTH`` runs the two arms
-separately. Dual-arm output writes separate FITS families:
-
-- ``<prefix>_rgs_chunk_###.fits``
-- ``<prefix>_bgs_chunk_###.fits``
-
-``--retrieval-type`` is retained for compatibility, but ``-L/--lambda-range`` is
-the preferred arm-selection interface. Datalink mode runs with one worker.
-
-Dithers Parquet export
-----------------------
-
-``dithers-to-parquet`` exports the combined spectrum and matching
-``*_DITH1D_*_SIGNAL`` spectra for each catalog object. It is local-Datalabs only
-by data access model: it reads catalog ``datalabs_path`` + ``file_name`` entries
-and does not use Datalink.
-
-.. code-block:: bash
-
-   euclidkit dithers-to-parquet \
-     --catalog-table spectra_sources.fits \
-     --output-prefix ./output/raw_sir \
-     --chunk-size 2000 \
-     --workers 8 \
-     --lambda-range RGS \
-     --environment PDR --release DR1
-
-This writes:
-
-- ``raw_sir_combined_part001.parquet``, ...
-- ``raw_sir_dithers_part001.parquet``, ...
+- ``raw_sir_combined_part001.parquet``, and so on: the combined spectra
+- ``raw_sir_dithers_part001.parquet``, and so on: one row per dither spectrum
 - ``raw_sir_manifest.json``
 
-Use ``--dithers-only`` when combined spectra were already exported with
-``compile-spectra`` Parquet mode.
+Add ``--dithers-only`` to skip the combined spectra, for example if you have
+already exported them with ``compile-spectra``.
 
-Raw-frame observation metadata
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Each dither row includes these columns from the exposure:
 
-Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
-``obs_time_utc``, and ``pa`` from the archive raw-frame table. PDR/Q1 uses
-``q1.raw_frame`` (with ``--release Q1``), PDR/DR1 uses ``dr1.raw_frame``, and OTF/REG use
-``sedm.raw_frame``. ``dithers-to-parquet`` matches raw-frame ``pointing_id`` to
-``ptgid`` from the dither HDU and requires ``grism_wheel_pos`` to match the
-dither ``gwa_pos``. If ``ptgid`` is unavailable, it falls back to the parsed
-``dither_id`` from ``*_DITH1D_<n>_SIGNAL`` for the pointing key.
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-Internally, the command avoids long literal ID-list clauses by uploading a
-distinct one-column pointing table and joining it to the archive raw-frame
-table:
+   * - Column
+     - Content
+   * - ``dither_id``, ``ptgid``
+     - Dither number and pointing ID
+   * - ``gwa_pos``, ``gwa_tilt``
+     - Grism wheel position and tilt
+   * - ``obs_time_mjd``, ``obs_time_utc``
+     - Observation time of the exposure
+   * - ``pa``
+     - Position angle of the exposure
 
-.. code-block:: sql
+The last three come from the archive's ``raw_frame`` table. ``euclidkit``
+matches each dither to its raw frame by pointing ID and grism wheel position.
+The manifest reports how many dither rows found a match.
 
-   SELECT
-     r.pointing_id,
-     r.grism_wheel_pos,
-     r.obs_time_mjd,
-     r.obs_time_utc,
-     r.pa
-   FROM dr1.raw_frame AS r
-   JOIN TAP_UPLOAD.dither_pointings AS p
-     ON r.pointing_id = p.pointing_id
-    AND r.grism_wheel_pos = p.gwa_pos
+Troubleshooting
+---------------
 
-Use ``q1.raw_frame`` for PDR/Q1 and ``sedm.raw_frame`` for OTF/REG.
+``compile-spectra`` reports missing files
+   The local modes need the Euclid data volumes. Run them on ESA Datalabs, or
+   use ``--use-datalink``.
 
-Notes
------
+``compile-spectra`` stops because output files exist
+   Choose another ``--prefix``, or add ``--overwrite``.
 
-- Use ``--limit N`` with ``compile-spectra`` for quick Parquet or FITS tests.
-- Existing Parquet part, manifest, or failures files require ``--overwrite``.
-- ``--on-error fail`` stops on the first unreadable Parquet row.
-- ``--on-error skip`` continues past unreadable rows and writes a failures JSONL.
-- Local Datalabs modes require valid ``datalabs_path``, ``file_name``, and
-  ``hdu_index`` values in the spectra-source catalogue.
+The export is empty for ``-L BGS``
+   The table may contain only red-grism spectra. Check the
+   ``lambda_skipped_rows`` count in the manifest.

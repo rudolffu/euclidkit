@@ -1,494 +1,422 @@
-CLI Reference
-=============
+Command Reference
+=================
 
-Top-level commands
-------------------
-
-- ``euclidkit init-config``
-- ``euclidkit diagnostics``
-- ``euclidkit crossmatch``
-- ``euclidkit query-morph``
-- ``euclidkit query-spectra``
-- ``euclidkit query-zspe``
-- ``euclidkit compile-spectra``
-- ``euclidkit dithers-to-parquet``
-- ``euclidkit query-cutana``
-- ``euclidkit download-cutana-alternatives``
-- ``euclidkit cutouts``
-- ``euclidkit query-segmap``
-- ``euclidkit compile-segmap``
-- ``euclidkit upload-table``
-- ``euclidkit select-footprint``
-
-Use ``--help`` on any command for full options:
+This page lists every ``euclidkit`` command, what it needs, and its main
+options. For the complete and current option list of a command, run it with
+``--help``:
 
 .. code-block:: bash
 
-   euclidkit query-spectra --help
+   euclidkit crossmatch --help
 
-Environment options
--------------------
+All commands
+------------
 
-Commands that access the Euclid archive support:
+"Login" means that the command queries the archive and needs your
+:doc:`credentials <configuration>`. "Datalabs" means that it reads files from
+the Euclid data volumes on ESA Datalabs.
 
-- ``--environment``: ``PDR``, ``IDR``, ``OTF``, ``REG``
-- ``--release``: ``DR1`` (default) or ``Q1``, on PDR only
-- ``--field`` (DR1/IDR catalogue commands): ``WIDE`` or ``DEEP``
-- ``--deep-partition`` for MER-based DR1 DEEP workflows:
-  ``survey`` (default), ``mode``, or ``both``
+.. list-table::
+   :header-rows: 1
+   :widths: 30 44 10 16
+
+   * - Command
+     - Purpose
+     - Login
+     - Datalabs
+   * - :ref:`select-footprint <cmd-select-footprint>`
+     - Keep sources inside a Euclid footprint
+     - No
+     - No
+   * - :ref:`crossmatch <cmd-crossmatch>`
+     - Match sources to the MER catalogue
+     - Yes
+     - No
+   * - :ref:`upload-table <cmd-upload-table>`
+     - Upload a table to your archive user space
+     - Yes
+     - No
+   * - :ref:`query-morph <query-morph>`
+     - Add MER morphology by object ID
+     - Yes
+     - No
+   * - :ref:`query-zspe <cmd-query-zspe>`
+     - Add SPE redshift candidates by object ID
+     - Yes
+     - No
+   * - :ref:`query-spectra <cmd-query-spectra>`
+     - Find the spectra of your sources
+     - Yes
+     - No
+   * - :ref:`compile-spectra <cmd-compile-spectra>`
+     - Export spectra to Parquet or FITS
+     - Datalink mode only
+     - Unless Datalink mode
+   * - :ref:`dithers-to-parquet <cmd-dithers-to-parquet>`
+     - Export combined and per-dither spectra
+     - Yes
+     - Yes
+   * - :ref:`query-cutana <cmd-query-cutana>`
+     - Build a Cutana input catalogue
+     - Yes
+     - No
+   * - :ref:`download-cutana-alternatives <cmd-download-cutana-alternatives>`
+     - Download the mosaics that ``query-cutana`` did not select
+     - Yes
+     - No
+   * - :ref:`cutouts <cmd-cutouts>`
+     - Write image cutouts directly
+     - Yes
+     - Yes
+   * - :ref:`query-segmap <cmd-query-segmap>`
+     - Find segmentation-map files
+     - Yes
+     - No
+   * - :ref:`compile-segmap <cmd-compile-segmap>`
+     - Write segmentation-map cutouts
+     - No
+     - Yes
+   * - :ref:`init-config <cmd-init-config>`
+     - Write a configuration file template
+     - No
+     - No
+   * - :ref:`diagnostics <cmd-diagnostics>`
+     - Check the installation
+     - No
+     - No
+
+Options shared by archive commands
+----------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Option
+     - Meaning
+   * - ``-e``, ``--environment``
+     - Archive service: ``PDR`` (default, public), ``IDR``, ``OTF``, or ``REG``
+   * - ``--release``
+     - Public release: ``DR1`` (default) or ``Q1``. Only with ``PDR``.
+   * - ``--field``
+     - ``WIDE`` (default) or ``DEEP``. For DR1 and IDR. Alias: ``--idr-field``.
+   * - ``--deep-partition``
+     - ``survey`` (default), ``mode``, or ``both``. Only with ``--field DEEP``.
+       Alias: ``--idr-deep-partition``.
+   * - ``-c``, ``--credentials``
+     - Path of a credentials file
+   * - ``-v``, ``--verbose``
+     - Print more detail
+
+:doc:`environments` explains these choices. Not every command accepts every
+option. For example, only the MER-based commands accept ``--deep-partition``.
+
+Tables can be read and written as FITS (``.fits``), CSV (``.csv``), VOTable
+(``.vot``, ``.xml``), ECSV (``.ecsv``), and Parquet (``.parquet``). The format
+follows the file extension.
+
+Catalogue commands
+------------------
+
+.. _cmd-select-footprint:
+
+select-footprint
+~~~~~~~~~~~~~~~~
+
+Keep the rows of a table that lie inside a packaged Euclid DR1 footprint.
+Guide: :ref:`select-footprint-guide`.
+
+.. code-block:: bash
+
+   euclidkit select-footprint -i sources.fits -o in_footprint.fits --survey wide
+
+- ``-i``, ``--input`` and ``-o``, ``--output``: input and output tables
+  (required)
+- ``-s``, ``--survey``: ``wide`` (default), ``deep``, ``both``, ``cgv``, or
+  ``cgv_input``
+- ``-d``, ``--data-release``: ``dr1``, the only release available
+- ``--ra-col``, ``--dec-col``: coordinate columns in degrees (default ``ra``,
+  ``dec``)
+- ``--moc-path``: use your own MOC file instead
+
+.. _cmd-crossmatch:
+
+crossmatch
+~~~~~~~~~~
+
+Match a table to the MER catalogue by position or by object ID.
+Guide: :ref:`crossmatch-guide`.
+
+.. code-block:: bash
+
+   euclidkit crossmatch -i sources.fits -o matches.fits --radius 1.0
+
+- ``-i``, ``--input``: local input table. Give this or ``--user-table-name``.
+- ``--user-table-name``: name of a table already in your archive user space
+- ``-o``, ``--output``: output table (required)
+- ``-r``, ``--radius``: match radius in arcsec (default 1.0)
+- ``--ra-col``, ``--dec-col``: coordinate columns in degrees (default ``ra``,
+  ``dec``)
+- ``--match-mode``: ``auto`` (default), ``object-id``, or ``spatial``
+- ``--max-sources``: process only the first N rows
+- ``--full-async``: use asynchronous archive jobs
+- ``--async-chunk-size``: rows per asynchronous job (default 500000)
+- ``--drop-empty-columns``: remove output columns that are entirely missing
+
+.. _cmd-upload-table:
+
+upload-table
+~~~~~~~~~~~~
+
+Upload a local table to your archive user space.
+Guide: :ref:`crossmatch-guide`.
+
+.. code-block:: bash
+
+   euclidkit upload-table -i sources.fits -t my_sources
+
+- ``-i``, ``--input``: local table (required)
+- ``-t``, ``--table-name``: name of the table in the archive (required)
+- ``-d``, ``--description``: description stored with the table
+- ``-f``, ``--format``: input format, if the file extension is not enough
+- ``--overwrite``: replace an existing table of the same name
 
 .. _query-morph:
 
-Public release selection
-------------------------
-
-Archive commands accept ``--release DR1|Q1`` on PDR; DR1 is the default.
-Use ``--environment IDR`` without ``--release`` for the independent internal
-service. Legacy ``--idr-field`` and ``--idr-deep-partition`` names remain aliases
-for ``--field`` and ``--deep-partition``. See :doc:`environments` for migration
-and the public table mappings. Public-release-only operations unavailable in
-Q1 fail explicitly rather than reading DR1.
-
 query-morph
------------
+~~~~~~~~~~~
 
-Query public DR1 MER morphology by object ID and inner join measurements onto matched
-input rows. A prior MER crossmatch is unnecessary if Euclid ``object_id`` values
-are already available. The key is case-insensitive; returned morphology names
-are lowercase. Repeated input IDs retain separate rows. Existing columns with
-the selected measurement names are replaced.
+Add MER morphology measurements to a table with ``object_id``. DR1 and IDR
+only. Guide: :ref:`morphology-guide`.
 
 .. code-block:: bash
 
    euclidkit query-morph -i sources.fits -o morphology.fits
-   euclidkit query-morph -i sources.fits -o deep_morphology.parquet \
-       --field DEEP --deep-partition both --full-async
 
-This command defaults to public DR1 and also supports explicit IDR access. Q1 is unsupported. WIDE (default) queries
-``dr1.mer_morphology_wide_survey`` first, then
-``dr1.mer_morphology_wide_mode`` for unmatched IDs. DEEP defaults to
-``dr1.mer_morphology_deep_survey``; ``--deep-partition mode`` selects
-``dr1.mer_morphology_deep_mode``. ``both`` queries both DEEP partitions
-directly, keeping the survey measurement if an ID occurs in both.
+- ``-i``, ``--input`` and ``-o``, ``--output``: input and output tables
+  (required)
+- ``--full-async``, ``--async-chunk-size``: as for ``crossmatch``
 
-The selection contains each of these columns and its ``_err`` column:
+Without ``--full-async``, the query runs in batches of 1,000 unique IDs.
 
-- ``concentration``, ``asymmetry``, ``smoothness`` (CAS)
-- ``moment_20`` (M20), ``gini``
-- ``sersic_sersic_vis_radius`` (arcsec)
-- ``sersic_sersic_vis_axis_ratio``, ``sersic_sersic_vis_index``
-- ``sersic_angle`` (degrees)
-- ``flux_radius`` (pixels)
-
-Other measurements are dimensionless. The DR1 FITS schema specifies 64-bit
-integer IDs and 32-bit floating-point measurements; nulls are preserved.
-See the `DR1 morphology schema <http://st-dm.pages.euclid-sgs.uk/data-product-doc/dmdr1/merdpd/dpcards/mer_finalcatalog.html#morphology-catalog-fits-file>`_.
-
-Sync queries batch 1,000 unique IDs. ``--full-async`` uses server-side WIDE
-fallback and splits inputs above ``--async-chunk-size`` (default 500,000 unique
-IDs). Raw chunk parts retain internal partition provenance; the final output
-contains input columns and the 20 measurements/errors only. Failed downloads
-write recovery metadata (``.job.json`` or ``.manifest.json``) without writing a
-partial final table. Empty matches produce an empty table with the output schema.
-Use ``--credentials/-c`` for a credentials file and ``--verbose/-v`` for logging.
-
-crossmatch
-----------
-
-Crossmatch a user table against Euclid MER sources.
-
-Example:
-
-.. code-block:: bash
-
-   euclidkit crossmatch \
-     --input my_sources.fits \
-     --output crossmatch_results.fits \
-     --radius 1.0 \
-     --environment PDR --release DR1 \
-     --field WIDE
-
-DR1 DEEP partition example:
-
-.. code-block:: bash
-
-   euclidkit crossmatch \
-     --input my_sources.fits \
-     --output deep_mode_crossmatch.fits \
-     --match-mode object-id \
-     --environment PDR --release DR1 \
-     --field DEEP \
-     --deep-partition mode
-
-Archive user-table example (no re-upload):
-
-.. code-block:: bash
-
-   euclidkit crossmatch \
-     --user-table-name my_table \
-     --output crossmatch_results.fits \
-     --match-mode object-id \
-     --environment PDR --release DR1 \
-     --field WIDE
-
-Large-table async example:
-
-.. code-block:: bash
-
-   euclidkit crossmatch \
-     --input huge_sources.fits \
-     --output huge_crossmatch.fits \
-     --match-mode object-id \
-     --full-async \
-     --async-chunk-size 500000
-
-Drop empty result columns:
-
-.. code-block:: bash
-
-   euclidkit crossmatch \
-     --input my_sources.fits \
-     --output crossmatch_results.fits \
-     --drop-empty-columns
-
-Option semantics:
-
-- ``--max-sources`` limits total processed rows from the input table.
-- ``--async-chunk-size`` controls rows per async TAP job in ``--full-async`` mode.
-- ``--drop-empty-columns`` removes columns where every final result value is
-  null or missing before saving ``--output``. Zero, ``False``, and empty-string
-  columns are retained. Async chunk part files remain raw.
-- ``--deep-partition`` is used only with ``--environment PDR --release DR1 --field DEEP``
-  for MER-based commands. ``survey`` queries
-  ``dr1.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS), ``mode`` queries
-  ``dr1.mer_catalogue_deep_mode`` (CDFS, COSMOS), and ``both`` queries
-  survey first and mode second. The default is ``survey``.
-
-``--full-async`` behavior:
-
-- For smaller inputs, ``euclidkit`` submits one async TAP job, downloads the result to the requested output file, and removes the remote job after saving.
-- For large local input tables supplied with ``--input``, ``euclidkit`` splits the upload into async chunks, writes chunk files named ``<output>_part_####.fits``, writes ``<output>.manifest.json``, removes each remote job after its chunk is saved, and merges the chunk files into the requested final output.
-- For large archive user tables supplied with ``--user-table-name``, ``euclidkit`` uses the same chunk-file plus manifest workflow before producing the final merged FITS file.
-
-Matching mode recommendation:
-
-- Prefer ``--match-mode object-id`` whenever the input already contains Euclid ``object_id`` values, or ``source_id`` values that should be joined to MER ``object_id``. This avoids positional matching and is usually faster and more robust for large tables.
-
-query-spectra
--------------
-
-Query spectra-source rows for objects in an object-ID or coordinate table.
-``--match-mode`` accepts the same values as ``crossmatch``:
-``auto`` (default), ``object-id``, or ``spatial``.
-
-.. code-block:: bash
-
-   euclidkit query-spectra \
-     --crossmatch my_spectral_ids.fits \
-     --output spectra_sources.fits \
-     --environment PDR --release DR1 \
-     --field WIDE
-
-Spatial example:
-
-.. code-block:: bash
-
-   euclidkit query-spectra \
-     --crossmatch my_coordinates.fits \
-     --output spectra_sources.fits \
-     --match-mode spatial \
-     --radius 1.0 \
-     --ra-col ra \
-     --dec-col dec \
-     --environment PDR --release DR1 \
-     --field WIDE
-
-Matching behavior:
-
-- ``auto`` uses object-ID mode when ``object_id`` or ``object_id_euclid`` is
-  present; otherwise it uses spatial mode when RA/Dec columns can be resolved.
-- Object-ID mode uploads unique IDs as a temporary ``object_id`` column and
-  joins ``spectra_source.source_id = uploaded.object_id``.
-- A MER crossmatch table is not required. Any local table with the needed
-  spectra-source IDs or coordinates can be used. If your IDs are in a
-  ``source_id`` column, rename or copy that column to ``object_id`` before
-  running ``query-spectra``.
-- Spatial mode matches ``ra_obj``/``dec_obj`` to the input coordinates within
-  ``--radius`` arcsec and keeps only the nearest spectra-source row per input
-  row.
-- Spatial coordinate columns are resolved using exact ``--ra-col``/``--dec-col``
-  names first, then case-insensitive matches and common aliases such as
-  ``RA``/``DEC``, ``right_ascension``/``declination``,
-  ``ra_deg``/``dec_deg``, ``RAJ2000``/``DEJ2000``, and Euclid-specific
-  ``ra_euclid``/``dec_euclid`` names.
-- Rows with missing ``datalabs_path`` are excluded because local Datalabs
-  compilation needs a file path.
-
-Output columns include ``source_id``, ``ra_obj``, ``dec_obj``,
-``datalabs_path``, ``file_name``, ``hdu_index``, and the uploaded
-``object_id``. Spatial mode also includes ``input_row_id``, ``input_ra``,
-``input_dec``, and ``separation_arcsec``; its ``object_id`` is set from the
-matched ``source_id`` for downstream ``compile-spectra`` compatibility. For
-public DR1, ``--field WIDE`` queries ``dr1.spectra_source_wide`` and
-``--field DEEP`` queries ``dr1.spectra_source_deep``. Other
-environments use the corresponding ``spectra_source`` table for the selected
-release.
-
-The resulting table is the usual input to ``compile-spectra``. See
-:doc:`spectra_compilation` for the full spectra workflow.
+.. _cmd-query-zspe:
 
 query-zspe
-----------
+~~~~~~~~~~
 
-Query public DR1 SPE redshift candidates by ``object_id`` and join the matched SPE
-columns back to the input table.
+Add SPE redshift candidates to a table with ``object_id``. DR1 and IDR only.
+Guide: :ref:`redshift-guide`.
 
 .. code-block:: bash
 
-   euclidkit query-zspe \
-     --crossmatch crossmatch_results.fits \
-     --output zspe_matches.fits \
-     --object-type qso \
-     --field WIDE
+   euclidkit query-zspe -x matches.fits -o redshifts.fits --object-type qso
 
-``query-zspe`` supports ``--object-type qso|galaxy``. WIDE queries search the
-``wide_survey`` candidate table first and then use ``wide`` as the fallback for
-remaining objects. Use ``--full-async`` for one server-side async query with the
-same WIDE fallback behavior.
+- ``-x``, ``--crossmatch`` and ``-o``, ``--output``: input and output tables
+  (required)
+- ``--object-type``: ``qso`` (default) or ``galaxy``
+- ``--full-async``, ``--async-chunk-size``: as for ``crossmatch``
+
+Spectra commands
+----------------
+
+Guide for all three commands: :doc:`spectra_compilation`.
+
+.. _cmd-query-spectra:
+
+query-spectra
+~~~~~~~~~~~~~
+
+Find the spectra of the sources in a table of object IDs or positions.
+
+.. code-block:: bash
+
+   euclidkit query-spectra -x matches.fits -o spectra_sources.fits
+
+- ``-x``, ``--crossmatch``: input table (required). It does not have to be a
+  ``crossmatch`` output.
+- ``-o``, ``--output``: output table (required)
+- ``--match-mode``: ``auto`` (default), ``object-id``, or ``spatial``
+- ``-r``, ``--radius``: match radius in arcsec for spatial mode (default 1.0)
+- ``--ra-col``, ``--dec-col``: coordinate columns for spatial mode
+- ``--combine-output``: also write the spectra into this FITS file
+- ``--max-spectra``: limit the number of spectra in ``--combine-output``
+
+.. _cmd-compile-spectra:
 
 compile-spectra
----------------
+~~~~~~~~~~~~~~~
 
-Compile or export spectra rows returned by ``query-spectra``. Non-Datalink mode
-is local Datalabs file access and defaults to raw Parquet output. Datalink mode
-retrieves spectra through the archive service and remains FITS-only.
-
-Default local Datalabs Parquet example:
+Export the spectra listed by ``query-spectra``.
 
 .. code-block:: bash
 
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix raw_spectra \
-     --chunk-size 2000 \
-     -L RGS
+   euclidkit compile-spectra -s spectra_sources.fits -o ./output -L RGS
 
-Legacy local FITS example:
+- ``-s``, ``--spectra-table`` and ``-o``, ``--output-dir``: input table and
+  output directory (required)
+- ``--prefix``: start of the output filenames (default ``compiled_spectra``)
+- ``-L``, ``--lambda-range``: ``RGS`` (default), ``BGS``, or ``BOTH``
+- ``--output-format``: ``parquet`` (default) or ``fits``, for the local modes
+- ``--use-datalink``: download through the archive. Always writes FITS.
+- ``--chunk-size``: spectra per Parquet file (default 2000)
+- ``--max-extensions``: spectra per FITS file
+- ``--workers``: parallel workers. Default: up to 8 for Parquet, 1 for FITS
+  and Datalink.
+- ``--limit``: process only the first N rows
+- ``--on-error``: ``fail`` (default) or ``skip``, for Parquet
+- ``--overwrite``: replace existing output with the same prefix
+- ``--schema``: archive schema for Datalink. The default follows the release.
+- ``--retrieval-type``: older Datalink grism selector. Prefer ``-L``.
 
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_spectra \
-     --output-format fits
-
-Datalink dual-arm FITS example:
-
-.. code-block:: bash
-
-   euclidkit compile-spectra \
-     --spectra-table spectra_sources.fits \
-     --output-dir ./output \
-     --prefix compiled_dl \
-     --use-datalink \
-     --environment PDR --release DR1 \
-     -L BOTH
-
-Option semantics:
-
-- Non-Datalink ``compile-spectra`` reads local ``datalabs_path`` + ``file_name``
-  FITS files and writes Parquet by default.
-- ``--output-format fits`` selects the legacy local multi-extension FITS compiler.
-- ``--use-datalink`` retrieves spectra from the archive by source ID, remains
-  FITS-only, and ignores ``--output-format parquet``.
-- Parquet workers default to ``min(os.cpu_count(), 8)`` when ``--workers`` is omitted.
-- FITS compatibility and Datalink paths default to one worker.
-- ``--on-error fail`` stops on the first unreadable Parquet row; ``--on-error skip`` continues and writes ``<prefix>_failures.jsonl``.
-
-See :doc:`spectra_compilation` for the detailed Datalabs, Datalink, arm
-selection, and output-file behavior.
+.. _cmd-dithers-to-parquet:
 
 dithers-to-parquet
-------------------
+~~~~~~~~~~~~~~~~~~
 
-Export local Datalabs combined and per-dither SIR spectra to Parquet parts.
-This command reads local ``datalabs_path`` + ``file_name`` entries and does not
-use Datalink.
+Export the combined spectrum and each single-dither spectrum to Parquet.
 
 .. code-block:: bash
 
-   euclidkit dithers-to-parquet \
-     --catalog-table spectra_sources.fits \
-     --output-prefix ./output/raw_sir \
-     --lambda-range RGS \
-     --workers 8 \
-     --environment PDR --release DR1
+   euclidkit dithers-to-parquet --catalog-table spectra_sources.fits \
+     --output-prefix ./output/raw_sir --lambda-range RGS
 
-Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
-``obs_time_utc``, and ``pa`` from the environment raw-frame table
-(``dr1.raw_frame`` for PDR/DR1, ``q1.raw_frame`` for PDR/Q1, and
-``sedm.raw_frame`` for OTF/REG), joined on ``pointing_id`` and
-``grism_wheel_pos = gwa_pos``.
+- ``--catalog-table``: ``query-spectra`` output (required)
+- ``--output-prefix``: path and start of the output filenames (required)
+- ``--lambda-range``: ``RGS`` or ``BGS``. Without it, both are exported.
+- ``--dithers-only``: do not write the combined spectra
+- ``--chunk-size``, ``--workers``, ``--on-error``, ``--overwrite``: as for
+  ``compile-spectra``
+
+Image commands
+--------------
+
+Guide for the three image commands: :doc:`cutouts`.
+
+.. _cmd-query-cutana:
 
 query-cutana
-------------
+~~~~~~~~~~~~
 
-Build Cutana input CSV from source rows containing object IDs or coordinates.
-
-Example:
+Build a Cutana input catalogue from object IDs or positions.
 
 .. code-block:: bash
 
-   euclidkit query-cutana \
-     --sources my_sources.fits \
-     --output cutana_input.csv \
-     --instrument VIS \
-     --cutout-size arcsec \
-     --cutout-size-value 15
+   euclidkit query-cutana -s sources.fits -o cutana_input.csv --instrument VIS
 
-DR1 DEEP example:
+- ``-s``, ``--sources`` and ``-o``, ``--output``: input table and output CSV
+  (required)
+- ``--instrument``: ``VIS`` (default) or ``NISP``
+- ``--nisp-filters``: comma-separated list, for example ``NIR_Y,NIR_H``
+- ``--cutout-size``: ``arcsec`` (default) or ``pixel``
+- ``--cutout-size-value``: cutout diameter (default 15)
+- ``--keep-noncutana-cols``: keep your other input columns
 
-.. code-block:: bash
-
-   euclidkit query-cutana \
-     --sources my_sources.fits \
-     --output cutana_deep.csv \
-     --instrument NISP \
-     --nisp-filters NIR_Y,NIR_H \
-     --environment PDR --release DR1 \
-     --field DEEP \
-     --deep-partition both \
-     --cutout-size arcsec \
-     --cutout-size-value 15
-
-Cutana preparation products
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``query-cutana`` chooses one mosaic per source and band. It selects the nearest
-image centre using spherical separation, then breaks ties by full file path
-and product OID. Candidates without image-centre coordinates rank last. This
-rule is deterministic, not an exposure-depth or image-quality ranking. Exact
-duplicate file records are collapsed. Requested NISP band order is preserved;
-the default is ``NIR_Y,NIR_J,NIR_H``. Hyphens in filter names are accepted.
-
-The archive query requires the source centre to lie inside the mosaic footprint.
-Keep Cutana's FITS checks enabled: archive footprints do not replace FITS/WCS
-validation, and catalogue paths must be readable where Cutana runs.
-
-For ``cutana_input.csv`` the command also writes:
-
-* ``cutana_input.alternatives.csv``: all candidates for ambiguous source/band
-  pairs, including the selected candidate, rank, distance, archive filename,
-  paths and product OID when available.
-* ``cutana_input.coverage.csv``: resolved sources, available/missing bands and
-  whether a mosaic was found. Sources with no mosaic cannot be extracted.
-* ``cutana_input.manifest.json``: band groups, counts and companion-file paths.
-
-Sources missing some bands are retained. If available band sets differ, the
-main CSV is a combined inventory and separate ``.bands-*.csv`` files are written.
-**Run each manifest group separately in Cutana**, configuring
-``selected_extensions`` and ``channel_weights`` for that group's available
-bands. Cutana does not promise to fill missing bands: a fixed multiband channel
-configuration can reject a source missing a configured channel. When all
-sources share one band set, the manifest points to the original CSV.
-
-Diameters must be finite and positive, at most 10000 pixels or 3600 arcseconds;
-pixel diameters must be integers. Identical source/position rows collapse to
-one output source; repeated object IDs at distinct positions receive distinct
-stable IDs. Extra metadata uses the first input row for each object/position.
-Coverage reports describe sources resolved through MER, not unresolved input IDs.
+.. _cmd-download-cutana-alternatives:
 
 download-cutana-alternatives
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Download the unselected candidates later, without repeating the source query:
+Download the candidate mosaics that ``query-cutana`` did not select.
 
 .. code-block:: bash
 
    euclidkit download-cutana-alternatives \
-     --candidates cutana_input.alternatives.csv \
-     --output-dir alternative_mosaics \
-     --environment PDR --release DR1
+     --candidates cutana_input.alternatives.csv --output-dir alternatives
 
-Use the original query's archive environment, release and product service's schema
-(the default follows the selected release; ``--schema`` overrides it). Each distinct alternative filename is downloaded once with
-Astroquery's ``get_product(file_name=...)``. Existing nonempty files are reused;
-new downloads are staged so interrupted transfers are not treated as complete.
-The alternatives table can be filtered before downloading. This command does
-not modify the prepared catalogue or automatically download mosaics during
-``query-cutana``.
+- ``--candidates``: the ``.alternatives.csv`` file (required)
+- ``--output-dir``: download directory (required)
+- ``--schema``: archive product schema. The default follows the release.
+
+.. _cmd-cutouts:
 
 cutouts
--------
+~~~~~~~
 
-Generate Euclid image cutouts from catalogue positions or object metadata.
+Write image cutouts directly from the Datalabs volumes. ``euclidkit-cutouts``
+is the same command.
 
 .. code-block:: bash
 
-   euclidkit cutouts --help
+   euclidkit cutouts --object-id 123456789 --output ./cutouts --size 10
+
+- ``--object-id``, ``--ra`` with ``--dec``, ``-s``/``--source``, or
+  ``-f``/``--sources-file``: the source or sources
+- ``-o``, ``--output``: output directory (required)
+- ``--size``: cutout size in arcsec (default 10)
+- ``--instrument``: ``VIS`` (default) or ``NISP``
+- ``--nisp-filters``: comma-separated list of ``NIR_Y``, ``NIR_J``, ``NIR_H``
+- ``--product-type``: ``mosaic`` (default), ``calibrated_frame``, or
+  ``stacked_frame``
+
+Segmentation-map commands
+-------------------------
+
+Guide for both commands: :doc:`segmentation_maps`.
+
+.. _cmd-query-segmap:
 
 query-segmap
-------------
+~~~~~~~~~~~~
 
-Query MER segmentation-map metadata for rows that already contain
-``SEGMENTATION_MAP_ID`` from MER crossmatch output.
-
-Example:
+Find the segmentation-map file for each row of a ``crossmatch`` output.
 
 .. code-block:: bash
 
-   euclidkit query-segmap \
-     --input crossmatch_results.fits \
-     --output segmentation_maps.fits \
-     --environment PDR --release DR1
+   euclidkit query-segmap -i matches.fits -o segmentation_maps.fits
 
-``query-segmap`` computes ``tile_index`` locally as
-``floor(SEGMENTATION_MAP_ID / 1_000_000)`` and joins that value to the
-environment-specific segmentation-map table. See :doc:`segmentation_maps` for
-required columns, environment mapping, and downstream cutout compilation.
+- ``-i``, ``--input`` and ``-o``, ``--output``: input and output tables
+  (required)
+
+.. _cmd-compile-segmap:
 
 compile-segmap
+~~~~~~~~~~~~~~
+
+Write one segmentation-map cutout per row of a ``query-segmap`` output.
+
+.. code-block:: bash
+
+   euclidkit compile-segmap -i segmentation_maps.fits -o ./segmap_cutouts
+
+- ``-i``, ``--input`` and ``-o``, ``--output-dir``: input table and output
+  directory (required)
+- ``--size-arcsec``: side of the square cutout in arcsec (default 10)
+- ``--overwrite``: replace existing cutouts
+- ``--on-error``: ``fail`` (default) or ``skip``
+
+Setup commands
 --------------
 
-Create local FITS cutouts from ``query-segmap`` output rows.
+.. _cmd-init-config:
 
-Example:
+init-config
+~~~~~~~~~~~
 
-.. code-block:: bash
-
-   euclidkit compile-segmap \
-     --input segmentation_maps.fits \
-     --output-dir ./segmap_cutouts \
-     --size-arcsec 10
-
-``compile-segmap`` opens local ``datalabs_path`` + ``file_name`` FITS files and
-writes one raw-label FITS cutout per source row. See :doc:`segmentation_maps`
-for required columns, output semantics, and error-handling options.
-
-upload-table
-------------
-
-Upload a local table into Euclid TAP user workspace.
-
-Example:
+Write a configuration file template. See :doc:`configuration`.
 
 .. code-block:: bash
 
-   euclidkit upload-table \
-     --input my_sources.fits \
-     --table-name my_sources_work
+   euclidkit init-config
 
-select-footprint
-----------------
+- ``-o``, ``--output``: where to write the file (default
+  ``~/.euclidkit/euclidkit_config.yaml``)
+- ``-t``, ``--template``: ``basic`` (default), ``advanced``, or ``pipeline``
 
-Filter an input catalogue to rows that fall within a packaged Euclid footprint
-MOC.
+.. _cmd-diagnostics:
+
+diagnostics
+~~~~~~~~~~~
+
+Check the installation. See :doc:`installation` for what ``--check-data``
+covers.
 
 .. code-block:: bash
 
-   euclidkit select-footprint \
-     --input my_sources.fits \
-     --output in_footprint.fits \
-     --survey mer-wide
+   euclidkit diagnostics --check-deps
+
+- ``--check-deps``: check that the dependencies import
+- ``--check-data``: check for the Q1 and ERO data volumes, and for a
+  credentials file in the configured location
+- ``--check-desi``: check for the optional ``sparcl-client`` package
+
+Without options, all three checks run.

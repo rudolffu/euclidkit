@@ -1,132 +1,118 @@
-Segmentation Map Cutouts
+Segmentation-Map Cutouts
 ========================
 
-``euclidkit`` provides a two-step workflow for going from MER crossmatch rows to
-local MER segmentation-map FITS cutouts:
+A MER segmentation map labels each pixel of a tile with the object that it
+belongs to. A cutout of that map around your source shows the footprint of the
+source and of its neighbours. You can use it to mask neighbours or to check
+deblending.
 
-1. ``query-segmap`` resolves the segmentation-map tile metadata from the archive.
-2. ``compile-segmap`` opens the local tile FITS files and writes one cutout per
-   source row.
+The workflow has two steps:
 
-This workflow is local-file oriented after ``query-segmap``: ``compile-segmap``
-does not query TAP or use Datalink.
+1. ``query-segmap`` asks the archive which segmentation-map file covers each
+   source. It runs on any computer.
+2. ``compile-segmap`` cuts the maps out of the local files. It runs on ESA
+   Datalabs and makes no archive queries.
 
-Workflow
---------
-
-Start from a MER crossmatch table. The table must contain ``SEGMENTATION_MAP_ID``;
-if it does not, rerun ``euclidkit crossmatch`` first.
-
-.. code-block:: bash
-
-   euclidkit query-segmap \
-     --input crossmatch_results.fits \
-     --output segmentation_maps.fits \
-     --environment PDR --release DR1
-
-Then create cutouts from the local segmentation-map FITS files:
-
-.. code-block:: bash
-
-   euclidkit compile-segmap \
-     --input segmentation_maps.fits \
-     --output-dir ./segmap_cutouts \
-     --size-arcsec 10
-
-``compile-segmap`` groups rows by ``datalabs_path`` + ``file_name`` and opens
-each large segmentation-map tile once with FITS memmap.
-
-Required columns
+Before you start
 ----------------
 
-``query-segmap`` input columns are matched case-insensitively:
+You need a ``crossmatch`` output table. ``query-segmap`` reads these columns
+from it (names are matched without regard to case):
 
-- ``SEGMENTATION_MAP_ID``
-- ``object_id``
-- source coordinates: ``ra``/``dec``, or ``mer_ra``/``mer_dec`` if ``ra``/``dec`` are absent
-
-``compile-segmap`` input is normally the output of ``query-segmap`` and requires:
-
-- ``datalabs_path``
-- ``file_name``
 - ``segmentation_map_id``
 - ``object_id``
-- source coordinates: ``ra``/``dec``, or ``mer_ra``/``mer_dec`` if ``ra``/``dec`` are absent
+- ``ra`` and ``dec``, or ``mer_ra`` and ``mer_dec`` if those are absent
 
-Segmentation tile lookup
-------------------------
+If your table has no ``segmentation_map_id`` column, run
+:ref:`crossmatch <crossmatch-guide>` first.
 
-``query-segmap`` computes the segmentation tile locally using the authoritative
-formula:
+Step 1: Find the segmentation-map files
+---------------------------------------
 
-.. code-block:: text
+.. code-block:: bash
 
-   tile_index = floor(SEGMENTATION_MAP_ID / 1_000_000)
+   euclidkit query-segmap -i matches.fits -o segmentation_maps.fits
 
-It then joins the uploaded tile indices to the environment-specific
-``mer_segmentation_map`` table:
+The output adds the file location (``datalabs_path`` and ``file_name``) of the
+tile for each source.
 
-- ``PDR`` / ``DR1`` (default): ``dr1.mer_segmentation_map``
-- ``PDR`` / ``Q1``: ``q1.mer_segmentation_map``
-- ``IDR``: ``dr1.mer_segmentation_map``
-- ``OTF`` and ``REG``: ``sedm.mer_segmentation_map``
+``--field`` and ``--deep-partition`` do not apply here, because the
+segmentation-map table is not split by field. Use ``--release Q1`` for Q1
+sources.
 
-``--field`` and ``--deep-partition`` are not used here because
-``mer_segmentation_map`` is not split by those MER catalogue partitions.
+Step 2: Make the cutouts (on Datalabs)
+--------------------------------------
 
-Cutout output
--------------
+.. code-block:: bash
 
-By default, ``compile-segmap`` writes one 10 arcsec x 10 arcsec FITS file per
-source row. The output filename pattern is:
+   euclidkit compile-segmap -i segmentation_maps.fits -o ./segmap_cutouts \
+     --size-arcsec 10
+
+This writes one FITS file per source row, named:
 
 .. code-block:: text
 
    segmap_cutout_row######_obj*_seg*.fits
 
-The output FITS primary HDU contains raw segmentation-label pixels from the MER
-segmentation map. Pixels are not converted into a source-only binary mask, and
-neighboring object labels inside the cutout are preserved.
+Options:
 
-Boundary sources use partial cutouts with zero-valued padding. Existing output
-files are skipped by default; pass ``--overwrite`` to replace them. Use
-``--on-error skip`` to continue past missing files or bad rows, otherwise the
-command fails on the first error.
+- ``--size-arcsec`` is the side of the square cutout in arcsec (default 10).
+- ``--overwrite`` replaces existing cutouts. By default they are skipped.
+- ``--on-error skip`` continues past missing files and bad rows. The default,
+  ``fail``, stops at the first error.
+- ``--no-progress`` hides the progress display.
 
-Useful options
---------------
+Read the cutouts
+----------------
 
-.. code-block:: bash
+The primary HDU of each cutout holds the **raw segmentation labels**, not a
+binary mask. Pixels of neighbouring objects keep their own labels. Where a
+cutout extends past the edge of the tile, the missing pixels are zero.
 
-   euclidkit compile-segmap \
-     --input segmentation_maps.fits \
-     --output-dir ./segmap_cutouts \
-     --size-arcsec 10 \
-     --overwrite \
-     --on-error skip \
-     --no-progress
+For how a label value relates to an object, see the MER segmentation-map
+product description in the
+`Euclid DR1 Data Product Description <https://euclid.esac.esa.int/dr/dr1/dpdd/>`_.
 
-- ``--size-arcsec`` sets the square cutout size; default is ``10.0``.
-- ``--overwrite`` replaces existing cutout FITS files.
-- ``--on-error fail|skip`` controls whether missing files or bad rows abort the run.
-- ``--progress``/``--no-progress`` controls tile-processing progress output.
+.. code-block:: python
+
+   from astropy.io import fits
+
+   labels = fits.getdata("segmap_cutouts/<cutout file>.fits")
+   print(labels.shape, labels.max())
 
 Python API
 ----------
 
 .. code-block:: python
 
+   from euclidkit.core.data_access import EuclidArchive
    from euclidkit.core.segmap import compile_segmap_cutouts
+   from euclidkit.utils.io import load_table
+
+   archive = EuclidArchive()
+   archive.login()
+   archive.query_segmentation_maps(
+       source_table=load_table("matches.fits"),
+       output_file="segmentation_maps.fits",
+   )
+   archive.logout()
 
    stats = compile_segmap_cutouts(
        input_table="segmentation_maps.fits",
        output_dir="./segmap_cutouts",
        size_arcsec=10.0,
        on_error="skip",
-       show_progress=True,
    )
+   print(stats.written_rows, "written,", stats.failed_rows, "failed")
 
-   print(stats.written_rows, stats.failed_rows)
+How the tile is identified
+--------------------------
 
-``compile_segmap_cutouts`` returns ``SegmapCutoutStats`` with requested, written,
-failed, skipped-existing, and output-file counts.
+``euclidkit`` computes the tile of each source from its segmentation-map ID:
+
+.. code-block:: text
+
+   tile_index = floor(segmentation_map_id / 1,000,000)
+
+It then looks up that tile in the ``mer_segmentation_map`` table of the
+selected release. :doc:`environments` lists the table for each release.

@@ -25,6 +25,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
+- Documentation rewritten for astronomers: task-based guides for catalogues,
+  spectra, image cutouts and segmentation maps, a command reference, and a
+  glossary. The README is now a short overview that links to the full docs.
 - Removed tests for retired APIs and refreshed current archive, spectra and I/O
   behavior tests with isolated credentials and temporary files.
 - PDR now defaults to DR1 instead of Q1; use `--release Q1` for previous public

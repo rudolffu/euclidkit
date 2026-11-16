@@ -1,75 +1,147 @@
-Archive Services and Data Releases
-==================================
+Data Releases and Fields
+========================
 
-Archive service and public data release are separate choices. ``--environment``
-selects the service; ``--release`` selects a dataset on the public service.
+Most commands need to know three things: which archive to query, which data
+release, and which survey field. The defaults are the public archive, DR1, and
+the WIDE field. This page explains when and how to change them.
 
-* ``PDR`` (default): public service. ``--release DR1`` is the default;
-  ``--release Q1`` selects the earlier public release.
-* ``IDR``: independent internal service (consortium access). Omit ``--release``.
-  It is not an alias for public DR1, and this package does not yet advertise DR2.
-* ``OTF`` and ``REG``: existing development/testing services. Omit ``--release``.
+Quick reference
+---------------
 
-Python defaults to ``EuclidArchive(environment='PDR', data_release='DR1')``;
-``EuclidArchive(data_release='Q1')`` selects public Q1. An explicit public release
-with IDR, OTF or REG is rejected rather than redirected. Existing authentication
-and async-job ownership behavior is unchanged.
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
 
-Public table routing
+   * - To query...
+     - Use
+   * - Public DR1, WIDE field
+     - No options (the defaults)
+   * - Public DR1, DEEP fields
+     - ``--field DEEP``
+   * - Public Q1
+     - ``--release Q1``
+   * - The internal consortium archive
+     - ``--environment IDR``
+
+Archive and release
+-------------------
+
+``--environment`` selects the archive service. ``--release`` selects a data
+release on the public service.
+
+- ``PDR`` (default) is the public archive. It serves ``--release DR1`` (default)
+  and ``--release Q1``.
+- ``IDR`` is the internal archive for Euclid Consortium members. It is a
+  separate service, not another name for public DR1. Do not pass ``--release``
+  with it.
+- ``OTF`` and ``REG`` are development and testing services. Do not pass
+  ``--release`` with them.
+
+Passing ``--release`` together with ``IDR``, ``OTF``, or ``REG`` is an error.
+
+In Python, the same choices are arguments of ``EuclidArchive``:
+
+.. code-block:: python
+
+   from euclidkit.core.data_access import EuclidArchive
+
+   dr1 = EuclidArchive()                         # public DR1
+   q1 = EuclidArchive(data_release="Q1")         # public Q1
+   internal = EuclidArchive(environment="IDR")   # internal archive
+
+WIDE and DEEP fields
 --------------------
 
-Public DR1 uses the ``dr1`` schema; public Q1 uses ``q1``. This applies consistently
-to MER, spectra-source, segmentation-map, mosaic and raw-frame queries and the
-default download/datalink schema. Explicit table or download-schema overrides
-remain available. Query manifests and recovery metadata record both service and
-release. IDR retains its current internal table routing separately; future IDR
-schema changes will require validation against that service.
+DR1 and the internal archive store the WIDE and DEEP surveys in separate
+tables. Select one with ``--field WIDE`` (default) or ``--field DEEP``.
 
-DR1 and IDR field selection
----------------------------
+Each field is further split into two partitions, ``survey`` and ``mode``:
 
-Use ``--field WIDE`` (default) or ``--field DEEP``. The legacy ``--idr-field``
-spelling remains an alias, including for public DR1.
+- **WIDE**: you do not choose. ``euclidkit`` queries the ``survey`` table
+  first, then queries the ``mode`` table only for sources that were not found.
+- **DEEP**: choose with ``--deep-partition``.
 
-* WIDE queries ``dr1.mer_catalogue_wide_survey`` first, then
-  ``dr1.mer_catalogue_wide_mode`` only for unmatched sources.
-* DEEP uses ``--deep-partition survey`` (default), ``mode`` or ``both`` for
-  ``dr1.mer_catalogue_deep_survey`` and/or ``dr1.mer_catalogue_deep_mode``.
-  Survey takes precedence when an object occurs in both.
-* Morphology uses the corresponding ``dr1.mer_morphology_*`` tables.
-* Spectra sources use ``dr1.spectra_source_wide`` or ``dr1.spectra_source_deep``.
-  SPE candidates retain the WIDE survey-first fallback.
-
-``--idr-deep-partition`` remains an alias for ``--deep-partition``. Existing
-Python ``idr_field`` and ``idr_deep_partition`` keywords remain supported.
-IDR uses the corresponding internal ``catalogue.*`` catalogue tables.
-Q1 has a single MER catalogue and does not support DEEP selection, morphology
-queries or SPE candidate queries through these commands.
-
-Examples
---------
+  - ``survey`` (default) covers the Euclid Deep Fields: EDF-N, EDF-F, and EDF-S.
+  - ``mode`` covers CDFS and COSMOS.
+  - ``both`` queries ``survey`` and then ``mode``. If an object is in both,
+    the ``survey`` row is kept.
 
 .. code-block:: bash
 
-   # Public DR1 WIDE (both choices are defaults)
-   euclidkit crossmatch -i sources.fits -o dr1_matches.fits
+   # A COSMOS sample
+   euclidkit crossmatch -i cosmos_sources.fits -o cosmos_matches.fits \
+     --field DEEP --deep-partition mode
 
-   # Public DR1 DEEP
-   euclidkit query-cutana -s sources.fits -o dr1_deep.csv \
-     --environment PDR --release DR1 --field DEEP --deep-partition both
+In Python, the corresponding keywords are ``idr_field`` and
+``idr_deep_partition``. The names are historical. They apply to public DR1 as
+well as to the internal archive.
 
-   # Earlier public Q1
-   euclidkit crossmatch -i sources.fits -o q1_matches.fits --release Q1
+.. code-block:: python
 
-   # Explicit internal service: no public-release flag
-   euclidkit query-morph -i sources.fits -o internal_morphology.fits \
-     --environment IDR --field WIDE
+   matches = archive.crossmatch_sources(
+       user_table="cosmos_sources.fits",
+       idr_field="DEEP",
+       idr_deep_partition="mode",
+   )
 
-Migration
----------
+What Q1 does not support
+------------------------
 
-Commands that previously used PDR to access Q1 must now pass ``--release Q1``.
-Public DR1 workflows previously run against IDR should use PDR (or omit the
-service option). Old field-option names remain accepted. Public crossmatch
-outputs use the requested filename; the legacy automatic WIDE/DEEP filename
-prefix remains restricted to explicit IDR commands.
+Q1 has a single MER catalogue. With ``--release Q1``:
+
+- ``--field DEEP`` is an error.
+- ``query-morph`` and ``query-zspe`` are not available.
+
+These commands stop with an error. They never fall back to DR1 data.
+
+Archive tables behind each choice
+---------------------------------
+
+You do not need these names to use ``euclidkit``. They are listed so that you
+can reproduce a query by hand in ADQL, or cite the tables that you used.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
+
+   * - Data
+     - Public DR1
+     - Public Q1
+   * - MER catalogue
+     - ``dr1.mer_catalogue_wide_survey``, ``_wide_mode``, ``_deep_survey``,
+       ``_deep_mode``
+     - ``q1.mer_catalogue``
+   * - Morphology
+     - ``dr1.mer_morphology_*`` with the same four suffixes
+     - Not available
+   * - Spectra index
+     - ``dr1.spectra_source_wide``, ``dr1.spectra_source_deep``
+     - ``q1.spectra_source``
+   * - Redshift candidates
+     - ``dr1.spectro_z_spe_<type>_candidates_wide_survey``, ``_wide``, ``_deep``
+     - Not available
+   * - Segmentation maps, mosaics, raw frames
+     - ``dr1.mer_segmentation_map``, ``dr1.raw_frame``, and other ``dr1.*``
+       product tables
+     - The same names under ``q1.*``
+
+The internal archive (``IDR``) uses the same DR1 table layout under the
+``catalogue`` schema for catalogues, ``dr1.raw_frame`` and
+``dr1.mer_segmentation_map`` for those two product tables, and ``sedm`` for
+other products.
+
+Every manifest and recovery file that ``euclidkit`` writes records the archive
+and the release, so you can check later where a result came from.
+
+Migrating from earlier versions
+-------------------------------
+
+- **PDR now defaults to DR1.** Commands that relied on PDR meaning Q1 must add
+  ``--release Q1``.
+- **Public DR1 work that used ``--environment IDR``** should now use the
+  default public archive. Remove the option.
+- ``--idr-field`` and ``--idr-deep-partition`` still work. They are aliases
+  for ``--field`` and ``--deep-partition``.
+- ``crossmatch`` on the public archive writes to exactly the output filename
+  that you give. Only ``--environment IDR`` still adds a ``wide_`` or ``deep_``
+  prefix to the filename.
