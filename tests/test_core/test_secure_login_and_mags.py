@@ -1,6 +1,5 @@
 """Tests for secure login flows and mag conversion in crossmatch."""
 
-import os
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -8,6 +7,8 @@ import pytest
 from astropy.table import Table
 
 from euclidkit.core.data_access import EuclidArchive
+
+pytestmark = pytest.mark.usefixtures("isolated_credentials")
 
 
 class TestSecureLogin:
@@ -42,7 +43,7 @@ class TestSecureLogin:
         # Provide user explicitly; simulate interactive prompt
         fake_getpass = Mock(return_value="typed_pw")
         with patch("euclidkit.core.data_access.getpass", fake_getpass):
-            self.archive.login(user="prompt_user", prompt=True)
+            self.archive.login(user="prompt_user", prompt=True, use_keyring=False)
         self.archive.euclid.login.assert_called_once_with(user="prompt_user", password="typed_pw")
 
 
@@ -99,3 +100,22 @@ class TestCrossmatchMagnitudes:
             expected = -2.5 * np.log10(result_table[flux_col]) + 23.9
             np.testing.assert_allclose(out[mag_col], expected)
 
+
+
+def test_missing_credentials_does_not_authenticate(isolated_credentials):
+    archive = EuclidArchive()
+    archive.euclid = Mock()
+    archive.login(use_keyring=False)
+    archive.euclid.login.assert_not_called()
+    assert not archive._logged_in
+
+
+def test_login_error_does_not_mark_authenticated(tmp_path, isolated_credentials):
+    archive = EuclidArchive()
+    archive.euclid = Mock()
+    archive.euclid.login.side_effect = RuntimeError('authentication failed')
+    credentials = tmp_path/'credentials.txt'
+    credentials.write_text('test-user\ntest-password\n')
+    with pytest.raises(RuntimeError, match='authentication failed'):
+        archive.login(credentials_file=str(credentials))
+    assert not archive._logged_in

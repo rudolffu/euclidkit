@@ -25,6 +25,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
+- Removed tests for retired APIs and refreshed current archive, spectra and I/O
+  behavior tests with isolated credentials and temporary files.
 - PDR now defaults to DR1 instead of Q1; use `--release Q1` for previous public
   workflows. IDR remains a separate internal service with no public-release flag.
 - Cutana preparation now validates diameters and coordinates, guarantees unique
@@ -37,6 +39,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Cutana segmentation-map shortcut now computes
   `floor(segmentation_map_id / 1_000_000)` locally and joins directly on
   `tile_index`, matching `query-segmap`.
+
+### Fixed
+- Local FITS compilation now copies a reused source HDU before assigning row-specific
+  headers, preserving identifiers and coordinates for repeated HDU references.
+- Compiled FITS `NSPECTRA` now counts written extensions after missing inputs are skipped.
 
 ## [0.2.0] - 2026-03-02
 

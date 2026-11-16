@@ -46,10 +46,12 @@ def test_public_release_on_other_service_is_rejected(environment, release):
 
 
 @pytest.mark.parametrize('environment', ['PDR', 'IDR', 'OTF', 'REG'])
-def test_client_stays_on_selected_service(environment):
+def test_client_stays_on_selected_service(environment, monkeypatch):
+    import sys
+    client = Mock()
+    monkeypatch.setitem(sys.modules, 'astroquery.esa.euclid.core', SimpleNamespace(EuclidClass=client))
     archive = EuclidArchive(environment)
-    with patch('astroquery.esa.euclid.core.EuclidClass') as client:
-        archive._ensure_client()
+    archive._ensure_client()
     client.assert_called_once_with(environment=environment)
     assert archive.data_release == ('DR1' if environment == 'PDR' else None)
 

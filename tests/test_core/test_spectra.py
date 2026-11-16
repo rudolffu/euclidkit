@@ -1,327 +1,169 @@
-"""Test spectral processing functionality."""
+"""Current spectrum HDU loading, validation and compilation contracts.
 
-import pytest
-import numpy as np
-import tempfile
-import os
+Removed APIs (loader caching, generic normalization/redshift transforms and
+private HDU/chunk builders) are intentionally not recreated by these tests.
+"""
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 
-from astropy.table import Table
+import numpy as np
+import pytest
 from astropy.io import fits
+from astropy.table import Table
 
-from euclidkit.core.spectra import SpectrumLoader, SpectrumProcessor, SpectrumCompiler
-
-
-class TestSpectrumLoader:
-    """Test cases for SpectrumLoader class."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        self.loader = SpectrumLoader()
-
-    def test_init(self):
-        """Test initialization."""
-        assert self.loader.cache_dir is None
-        assert self.loader.use_cache is True
-
-    def test_init_with_cache_dir(self):
-        """Test initialization with cache directory."""
-        loader = SpectrumLoader(cache_dir='/tmp/cache', use_cache=False)
-        assert loader.cache_dir == Path('/tmp/cache')
-        assert loader.use_cache is False
-
-    @patch('euclidkit.core.spectra.fits.open')
-    def test_load_spectrum_from_fits(self, mock_fits_open):
-        """Test loading spectrum from FITS file."""
-        # Mock FITS file structure
-        mock_hdu = Mock()
-        mock_hdu.data = np.array([
-            (5000.0, 1.0, 0.1),
-            (5001.0, 1.1, 0.1),
-            (5002.0, 0.9, 0.1)
-        ], dtype=[('wavelength', 'f8'), ('flux', 'f8'), ('error', 'f8')])
-        mock_hdu.header = {'OBJECT': 'TEST_QSO', 'INSTRUME': 'NISP'}
-        
-        mock_hdul = Mock()
-        mock_hdul.__enter__.return_value = [mock_hdu]
-        mock_fits_open.return_value = mock_hdul
-        
-        spectrum = self.loader.load_spectrum('/path/to/spectrum.fits')
-        
-        assert 'wavelength' in spectrum.colnames
-        assert 'flux' in spectrum.colnames
-        assert 'error' in spectrum.colnames
-        assert len(spectrum) == 3
+from euclidkit.core.spectra import SpectrumCompiler, SpectrumLoader, SpectrumProcessor
 
 
-class TestSpectrumProcessor:
-    """Test cases for SpectrumProcessor class."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        self.processor = SpectrumProcessor()
-        
-        # Sample spectrum data
-        self.sample_spectrum = Table({
-            'wavelength': np.linspace(4000, 8000, 1000),
-            'flux': np.random.normal(1.0, 0.1, 1000),
-            'error': np.full(1000, 0.1)
-        })
-
-    def test_init(self):
-        """Test initialization."""
-        assert self.processor.redshift_tolerance == 0.1
-
-    def test_apply_redshift_correction(self):
-        """Test redshift correction."""
-        redshift = 2.0
-        corrected = self.processor.apply_redshift_correction(
-            self.sample_spectrum, redshift
-        )
-        
-        # Wavelengths should be divided by (1 + z)
-        expected_wave = self.sample_spectrum['wavelength'] / (1 + redshift)
-        np.testing.assert_array_almost_equal(
-            corrected['wavelength'], expected_wave
-        )
-
-    def test_normalize_spectrum(self):
-        """Test spectrum normalization."""
-        normalized = self.processor.normalize_spectrum(self.sample_spectrum)
-        
-        # Check that flux is normalized
-        assert 'flux_normalized' in normalized.colnames
-        # Mean should be close to 1 for the normalization window
-        wave_mask = (normalized['wavelength'] > 5000) & (normalized['wavelength'] < 6000)
-        mean_flux = np.mean(normalized['flux_normalized'][wave_mask])
-        assert abs(mean_flux - 1.0) < 0.1
-
-    def test_resample_spectrum(self):
-        """Test spectrum resampling."""
-        new_wavelength = np.linspace(4500, 7500, 500)
-        resampled = self.processor.resample_spectrum(
-            self.sample_spectrum, new_wavelength
-        )
-        
-        assert len(resampled) == 500
-        np.testing.assert_array_equal(resampled['wavelength'], new_wavelength)
-
-    def test_mask_bad_pixels(self):
-        """Test bad pixel masking."""
-        # Introduce some bad pixels
-        spectrum = self.sample_spectrum.copy()
-        spectrum['flux'][100:110] = -999  # Bad flux values
-        spectrum['error'][200:205] = 0    # Zero errors
-        
-        masked = self.processor.mask_bad_pixels(spectrum)
-        
-        assert 'mask' in masked.colnames
-        # Check that bad pixels are masked
-        assert masked['mask'][105] is False  # Should be masked
-        assert masked['mask'][202] is False  # Should be masked
-        assert masked['mask'][50] is True    # Should be good
+def write_spectra(path, count=3):
+    hdus = [fits.PrimaryHDU()]
+    for i in range(count):
+        payload = np.array([(4000., float(i)), (5000., float(i + 1))],
+                           dtype=[('WAVELENGTH', 'f8'), ('SIGNAL', 'f8')])
+        hdus.append(fits.BinTableHDU(data=payload))
+    fits.HDUList(hdus).writeto(path)
+    return path
 
 
-class TestSpectrumCompiler:
-    """Test cases for SpectrumCompiler class."""
+def catalog(path, count=3):
+    return Table({'source_id': np.arange(count) + 100,
+                  'datalabs_path': [str(path.parent)]*count,
+                  'file_name': [path.name]*count,
+                  'hdu_index': np.arange(count) + 1,
+                  'ra_obj': np.arange(count) + 150., 'dec_obj': np.full(count, 2.)})
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        self.compiler = SpectrumCompiler(max_extensions=10)
-        
-        # Sample spectra table
-        self.sample_spectra_table = Table({
-            'object_id': [100001, 100001, 100002, 100003],
-            'spectrum_id': ['spec_1', 'spec_2', 'spec_3', 'spec_4'],
-            'instrument_name': ['NISP', 'VIS', 'NISP', 'VIS'],
-            'file_path': ['/data/spec1.fits', '/data/spec2.fits', 
-                         '/data/spec3.fits', '/data/spec4.fits'],
-            'ra': [150.0, 150.0, 151.0, 152.0],
-            'dec': [2.0, 2.0, 2.1, 2.2]
-        })
 
-    def test_init(self):
-        """Test initialization."""
-        assert self.compiler.max_extensions == 10
-        assert self.compiler.loader is not None
+@pytest.mark.parametrize('astropy_only', [False, True])
+def test_loader_returns_detached_hdu_payload(tmp_path, astropy_only):
+    path = write_spectra(tmp_path/'spectra.fits')
+    loader = SpectrumLoader()
+    if astropy_only:
+        with patch('euclidkit.core.spectra.fitsio', None):
+            result = loader.load_spectrum(str(path), hdu_index=2)
+    else:
+        result = loader.load_spectrum(str(path), hdu_index=2)
+    assert isinstance(result, fits.BinTableHDU)
+    np.testing.assert_array_equal(result.data['WAVELENGTH'], [4000., 5000.])
+    np.testing.assert_array_equal(result.data['SIGNAL'], [1., 2.])
+    path.unlink()
+    np.testing.assert_array_equal(result.data['SIGNAL'], [1., 2.])
 
-    def test_init_default_max_extensions(self):
-        """Test default max extensions."""
-        compiler = SpectrumCompiler()
-        assert compiler.max_extensions == 5000
 
-    def test_calculate_chunks(self):
-        """Test chunk calculation."""
-        chunks = self.compiler._calculate_chunks(25, max_per_chunk=10)
-        assert len(chunks) == 3
-        assert chunks == [(0, 10), (10, 20), (20, 25)]
+def test_loader_batch_indices_and_errors(tmp_path):
+    path = write_spectra(tmp_path/'spectra.fits')
+    loader = SpectrumLoader()
+    loaded = loader.load_spectra_batch(str(path), [1, 3, 1])
+    assert sorted(loaded) == [1, 3]
+    assert loader.load_spectra_batch(str(path), []) == {}
+    with pytest.raises(ValueError, match='out of range'):
+        loader.load_spectrum(str(path), 8)
+    with pytest.raises((FileNotFoundError, OSError)):
+        loader.load_spectrum(str(tmp_path/'absent.fits'))
 
-    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
-    @patch('astropy.io.fits.HDUList.writeto')
-    def test_compile_spectra_single_file(self, mock_writeto, mock_load_spectrum):
-        """Test compiling spectra into a single file."""
-        # Mock loaded spectra
-        mock_spectrum = Table({
-            'wavelength': np.linspace(4000, 8000, 100),
-            'flux': np.random.normal(1.0, 0.1, 100),
-            'error': np.full(100, 0.1)
-        })
-        mock_load_spectrum.return_value = mock_spectrum
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_files = self.compiler.compile_spectra(
-                spectra_table=self.sample_spectra_table[:5],  # 5 spectra, within limit
-                output_dir=temp_dir,
-                output_prefix='test_compiled'
-            )
-            
-            assert len(output_files) == 1
-            assert 'test_compiled_001.fits' in output_files[0]
-            mock_writeto.assert_called_once()
 
-    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
-    @patch('astropy.io.fits.HDUList.writeto')
-    def test_compile_spectra_multiple_files(self, mock_writeto, mock_load_spectrum):
-        """Test compiling spectra into multiple files."""
-        # Create more spectra than max_extensions
-        large_spectra_table = Table({
-            'spectrum_id': [f'spec_{i}' for i in range(25)],
-            'file_path': [f'/data/spec{i}.fits' for i in range(25)],
-            'object_id': [100000 + i for i in range(25)],
-            'ra': np.full(25, 150.0),
-            'dec': np.full(25, 2.0)
-        })
-        
-        mock_spectrum = Table({
-            'wavelength': np.linspace(4000, 8000, 100),
-            'flux': np.random.normal(1.0, 0.1, 100),
-            'error': np.full(100, 0.1)
-        })
-        mock_load_spectrum.return_value = mock_spectrum
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_files = self.compiler.compile_spectra(
-                spectra_table=large_spectra_table,
-                output_dir=temp_dir,
-                output_prefix='test_compiled'
-            )
-            
-            # Should create 3 files (10, 10, 5 spectra)
-            assert len(output_files) == 3
-            assert mock_writeto.call_count == 3
+def test_loader_verifies_local_path(tmp_path):
+    loader = SpectrumLoader()
+    assert loader.verify_spectrum_path(str(tmp_path), 'missing.fits') is None
+    path = write_spectra(tmp_path/'spectra.fits')
+    assert loader.verify_spectrum_path(str(tmp_path), path.name) == str(path)
 
-    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
-    def test_compile_spectra_with_overwrite(self, mock_load_spectrum):
-        """Test compiling with overwrite option."""
-        mock_spectrum = Table({
-            'wavelength': np.linspace(4000, 8000, 100),
-            'flux': np.random.normal(1.0, 0.1, 100),
-            'error': np.full(100, 0.1)
-        })
-        mock_load_spectrum.return_value = mock_spectrum
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create existing file
-            existing_file = Path(temp_dir) / 'test_compiled_001.fits'
-            existing_file.touch()
-            
-            with patch('astropy.io.fits.HDUList.writeto') as mock_writeto:
-                output_files = self.compiler.compile_spectra(
-                    spectra_table=self.sample_spectra_table[:3],
-                    output_dir=temp_dir,
-                    output_prefix='test_compiled',
-                    overwrite=True
-                )
-                
-                # Should call writeto with overwrite=True
-                mock_writeto.assert_called_once()
-                assert mock_writeto.call_args[1]['overwrite'] is True
 
-    @patch('euclidkit.core.spectra.SpectrumLoader.load_spectrum')
-    def test_compile_spectra_skip_failed_loads(self, mock_load_spectrum):
-        """Test that failed spectrum loads are skipped."""
-        # Mock some successful and some failed loads
-        def side_effect(file_path):
-            if 'spec_2' in file_path:
-                raise IOError("File not found")
-            return Table({
-                'wavelength': np.linspace(4000, 8000, 100),
-                'flux': np.random.normal(1.0, 0.1, 100),
-                'error': np.full(100, 0.1)
-            })
-        
-        mock_load_spectrum.side_effect = side_effect
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('astropy.io.fits.HDUList.writeto') as mock_writeto:
-                output_files = self.compiler.compile_spectra(
-                    spectra_table=self.sample_spectra_table,
-                    output_dir=temp_dir,
-                    output_prefix='test_compiled'
-                )
-                
-                # Should still create output files despite one failed load
-                assert len(output_files) == 1
-                mock_writeto.assert_called_once()
+@pytest.mark.parametrize('kind', ['valid', 'missing_columns', 'empty_hdu', 'image'])
+def test_processor_validates_supported_hdus(kind):
+    processor = SpectrumProcessor()
+    if kind == 'valid':
+        hdu = fits.BinTableHDU(Table({'WAVELENGTH': [4000., 5000.], 'SIGNAL': [-1., 3.]}))
+    elif kind == 'missing_columns':
+        hdu = fits.BinTableHDU(Table({'WAVELENGTH': [4000.]}))
+    elif kind == 'empty_hdu':
+        hdu = fits.BinTableHDU()
+    else:
+        hdu = fits.ImageHDU(np.ones((2, 2)))
+    result = processor.validate_spectrum(hdu)
+    assert result['valid'] == (kind == 'valid')
+    if kind == 'valid':
+        assert result['n_pixels'] == 2
+        assert result['wavelength_range'] == (4000., 5000.)
+        assert result['flux_range'] == (-1., 3.)
+    else:
+        assert result['issues']
 
-    def test_create_metadata_table(self):
-        """Test metadata table creation."""
-        output_files = ['/path/compiled_001.fits', '/path/compiled_002.fits']
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('astropy.table.Table.write') as mock_write:
-                metadata_file = self.compiler.create_metadata_table(
-                    spectra_table=self.sample_spectra_table,
-                    output_files=output_files,
-                    output_dir=temp_dir,
-                    output_name='metadata.fits'
-                )
-                
-                mock_write.assert_called_once()
-                assert 'metadata.fits' in metadata_file
 
-    def test_create_spectrum_hdu(self):
-        """Test HDU creation from spectrum data."""
-        spectrum = Table({
-            'wavelength': np.array([4000, 4001, 4002]),
-            'flux': np.array([1.0, 1.1, 0.9]),
-            'error': np.array([0.1, 0.1, 0.1])
-        })
-        
-        spectrum_info = {
-            'spectrum_id': 'test_spec',
-            'object_id': 100001,
-            'ra': 150.0,
-            'dec': 2.0,
-            'instrument_name': 'NISP'
-        }
-        
-        hdu = self.compiler._create_spectrum_hdu(spectrum, spectrum_info, extension_number=1)
-        
-        assert isinstance(hdu, fits.BinTableHDU)
-        assert hdu.header['EXTNAME'] == 'SPECTRUM'
-        assert hdu.header['EXTVER'] == 1
-        assert hdu.header['SPECID'] == 'test_spec'
-        assert hdu.header['OBJID'] == 100001
-        assert hdu.header['RA'] == 150.0
-        assert hdu.header['DEC'] == 2.0
-        assert hdu.header['INSTRUME'] == 'NISP'
+def test_compiler_current_default_and_required_columns(tmp_path):
+    compiler = SpectrumCompiler()
+    assert compiler.max_extensions == 1000
+    assert isinstance(compiler.loader, SpectrumLoader)
+    with pytest.raises(ValueError, match='Missing required columns'):
+        compiler.compile_spectra(Table({'source_id': [1]}), tmp_path)
 
-    def test_create_primary_hdu(self):
-        """Test primary HDU creation."""
-        file_info = {
-            'output_file': 'compiled_001.fits',
-            'n_extensions': 10,
-            'spectra_range': (0, 10)
-        }
-        
-        primary_hdu = self.compiler._create_primary_hdu(file_info)
-        
-        assert isinstance(primary_hdu, fits.PrimaryHDU)
-        assert primary_hdu.header['FILENAME'] == 'compiled_001.fits'
-        assert primary_hdu.header['NEXTEND'] == 10
-        assert primary_hdu.header['SPECMIN'] == 0
-        assert primary_hdu.header['SPECMAX'] == 10
-        assert 'CREATOR' in primary_hdu.header
-        assert 'DATE' in primary_hdu.header
+
+def test_compiler_chunks_preserve_data_and_source_headers(tmp_path):
+    path = write_spectra(tmp_path/'spectra.fits', count=5)
+    source = catalog(path, count=5)
+    compiler = SpectrumCompiler(max_extensions=2)
+    outputs = compiler.compile_spectra(source, tmp_path/'out', output_prefix='compiled')
+    assert [Path(p).name for p in outputs] == ['compiled_chunk_001.fits',
+        'compiled_chunk_002.fits', 'compiled_chunk_003.fits']
+    ids, fluxes = [], []
+    for output, count in zip(outputs, [2, 2, 1]):
+        with fits.open(output) as hdus:
+            assert len(hdus)-1 == count
+            assert hdus[0].header['NSPECTRA'] == count
+            for hdu in hdus[1:]:
+                ids.append(hdu.header['SOURC_ID'])
+                fluxes.append(hdu.data['SIGNAL'][0])
+                assert hdu.header['RA'] == source['ra_obj'][len(ids)-1]
+    assert ids == [100, 101, 102, 103, 104]
+    assert fluxes == [0., 1., 2., 3., 4.]
+    assert 'chunk_number' not in source.colnames
+
+
+def test_compiler_repeated_hdu_has_independent_source_headers(tmp_path):
+    path = write_spectra(tmp_path/'spectra.fits', count=1)
+    source = catalog(path, count=1)
+    source = Table(np.repeat(source.as_array(), 2))
+    source['source_id'] = [100, 200]
+    source['ra_obj'] = [150., 151.]
+    outputs = SpectrumCompiler().compile_spectra(source, tmp_path/'out')
+    with fits.open(outputs[0]) as hdus:
+        assert [h.header['SOURC_ID'] for h in hdus[1:]] == [100, 200]
+        assert [h.header['RA'] for h in hdus[1:]] == [150., 151.]
+
+
+def test_compiler_missing_file_counts_written_spectra(tmp_path):
+    path = write_spectra(tmp_path/'spectra.fits')
+    source = catalog(path)
+    source['file_name'][1] = 'absent.fits'
+    outputs = SpectrumCompiler().compile_spectra(source, tmp_path/'out')
+    with fits.open(outputs[0]) as hdus:
+        assert len(hdus) == 3
+        assert hdus[0].header['NSPECTRA'] == len(hdus)-1
+        assert [h.header['SOURC_ID'] for h in hdus[1:]] == [100, 102]
+
+
+def test_compiler_resume_and_overwrite(tmp_path):
+    path = write_spectra(tmp_path/'spectra.fits')
+    source = catalog(path)
+    compiler = SpectrumCompiler(max_extensions=2)
+    out = tmp_path/'out'
+    original = compiler.compile_spectra(source[:2], out)
+    old_bytes = Path(original[0]).read_bytes()
+    resumed = compiler.compile_spectra(source, out, overwrite=False)
+    assert len(resumed) == 2
+    assert Path(original[0]).read_bytes() == old_bytes
+    compiler.compile_spectra(source[:1], out, overwrite=True)
+    with fits.open(original[0]) as hdus:
+        assert len(hdus) == 2
+
+
+def test_compiler_metadata_tracks_real_chunk_sizes(tmp_path):
+    path = write_spectra(tmp_path/'spectra.fits')
+    source = catalog(path)
+    original = source.copy()
+    compiler = SpectrumCompiler(max_extensions=2)
+    outputs = compiler.compile_spectra(source, tmp_path/'out')
+    metadata_file = compiler.create_metadata_table(source, outputs, tmp_path/'out')
+    metadata = Table.read(metadata_file)
+    assert list(metadata['chunk_number']) == [1, 1, 2]
+    assert list(metadata['extension_number']) == [1, 2, 1]
+    assert source.colnames == original.colnames
+    np.testing.assert_array_equal(source.as_array(), original.as_array())

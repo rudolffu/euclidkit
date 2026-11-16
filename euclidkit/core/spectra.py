@@ -496,7 +496,7 @@ class SpectrumCompiler:
 
             for source in sources_in_file:
                 try:
-                    spectrum_hdu = spectra_by_index[int(source[hdu_index_col])]
+                    spectrum_hdu = spectra_by_index[int(source[hdu_index_col])].copy()
                     spectrum_hdu.name = str(source[source_id_col])
                     spectrum_hdu.header['SOURC_ID'] = source[source_id_col]
 
@@ -517,6 +517,7 @@ class SpectrumCompiler:
             progress.close()
 
         try:
+            primary_hdu.header['NSPECTRA'] = len(hdul_new) - 1
             hdul_new.writeto(output_file, overwrite=overwrite)
             logger.info(f"Wrote {len(hdul_new) - 1} spectra to {output_file.name}")
             if chunk_failed > 0:

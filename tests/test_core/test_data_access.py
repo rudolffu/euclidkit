@@ -1,18 +1,17 @@
 """Test data access functionality."""
 
-import pytest
-import numpy as np
-import pandas as pd
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
-import tempfile
 import os
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
 
+import numpy as np
+import pytest
 from astropy.table import Table
-from astropy import units as u
-from astropy.coordinates import SkyCoord
 
 from euclidkit.core.data_access import EuclidArchive
+
+pytestmark = pytest.mark.usefixtures("isolated_credentials")
 
 
 class TestEuclidArchive:
@@ -25,6 +24,7 @@ class TestEuclidArchive:
         # Mock the Euclid client
         self.mock_client = Mock()
         self.archive.euclid = self.mock_client
+        self.archive._logged_in = True
         
         # Sample test data
         self.sample_coordinates = Table({
@@ -45,13 +45,16 @@ class TestEuclidArchive:
         """Test default initialization."""
         archive = EuclidArchive()
         assert archive.environment == 'PDR'
-        assert archive.verbose is False
+        assert archive.data_release == "DR1"
+        assert archive.euclid is None
+        assert not archive._logged_in
         
     def test_init_custom_environment(self):
         """Test initialization with custom environment."""
-        archive = EuclidArchive(environment='OTF', verbose=True)
+        archive = EuclidArchive(environment='OTF')
         assert archive.environment == 'OTF'
-        assert archive.verbose is True
+        assert archive.data_release is None
+        assert archive.euclid is None
 
     def test_get_mer_table_name(self):
         """Test MER table name generation for different environments."""
@@ -96,6 +99,7 @@ class TestEuclidArchive:
         """query-segmap should ask users to crossmatch when SEGMENTATION_MAP_ID is absent."""
         archive = EuclidArchive(environment='PDR')
         archive._logged_in = True
+        archive.euclid = Mock()
 
         with pytest.raises(ValueError, match="Run euclidkit crossmatch first"):
             archive.query_segmentation_maps(Table({
@@ -108,6 +112,7 @@ class TestEuclidArchive:
         """query-segmap should validate object_id, ra, and dec input columns."""
         archive = EuclidArchive(environment='PDR')
         archive._logged_in = True
+        archive.euclid = Mock()
 
         with pytest.raises(ValueError, match="object_id"):
             archive.query_segmentation_maps(Table({
@@ -251,6 +256,7 @@ class TestEuclidArchive:
         """SPE redshift candidate queries require object_id input."""
         archive = EuclidArchive(environment='IDR')
         archive._logged_in = True
+        archive.euclid = Mock()
 
         with pytest.raises(ValueError, match="object_id"):
             archive.query_zspe_candidates(crossmatch_table=Table({'source_id': [1]}))
@@ -401,28 +407,23 @@ class TestEuclidArchive:
         assert 'label' in saved.colnames
         assert 'source_table' not in saved.colnames
 
-    @patch('euclidkit.core.data_access.Euclid')
-    def test_login_default_credentials(self, mock_euclid_class):
-        """Test login with default credentials."""
-        mock_instance = Mock()
-        mock_euclid_class.return_value = mock_instance
-        
-        archive = EuclidArchive()
-        archive.login()
-        
-        mock_euclid_class.assert_called_once()
-        mock_instance.login.assert_called_once_with('/media/user/cred.txt')
+    def test_login_default_credentials(self, tmp_path, isolated_credentials):
+        """Configured credentials are passed to the injected client by keyword."""
+        credentials = tmp_path/'credentials.txt'
+        credentials.write_text('test-user\ntest-password\n')
+        isolated_credentials.get = lambda key, default=None: str(credentials)
+        self.archive._logged_in = False
+        self.archive.login()
+        self.mock_client.login.assert_called_once_with(credentials_file=str(credentials))
+        assert self.archive._logged_in
 
-    @patch('euclidkit.core.data_access.Euclid')
-    def test_login_custom_credentials(self, mock_euclid_class):
-        """Test login with custom credentials file."""
-        mock_instance = Mock()
-        mock_euclid_class.return_value = mock_instance
-        
-        archive = EuclidArchive()
-        archive.login(credentials_file='/path/to/cred.txt')
-        
-        mock_instance.login.assert_called_once_with('/path/to/cred.txt')
+    def test_login_custom_credentials(self, tmp_path):
+        credentials = tmp_path/'explicit.txt'
+        credentials.write_text('test-user\ntest-password\n')
+        self.archive._logged_in = False
+        self.archive.login(credentials_file=str(credentials))
+        self.mock_client.login.assert_called_once_with(credentials_file=str(credentials))
+        assert self.archive._logged_in
 
     def test_logout(self):
         """Test logout functionality."""
@@ -433,7 +434,7 @@ class TestEuclidArchive:
         """Test crossmatching with astropy Table input."""
         # Mock the query result
         mock_result = self.sample_crossmatch_result
-        self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
+        self.mock_client.launch_job.return_value.get_results.return_value = mock_result
         
         result = self.archive.crossmatch_sources(
             user_table=self.sample_coordinates,
@@ -448,7 +449,7 @@ class TestEuclidArchive:
         """Test crossmatching with pandas DataFrame input."""
         df = self.sample_coordinates.to_pandas()
         mock_result = self.sample_crossmatch_result
-        self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
+        self.mock_client.launch_job.return_value.get_results.return_value = mock_result
         
         result = self.archive.crossmatch_sources(
             user_table=df,
@@ -467,7 +468,7 @@ class TestEuclidArchive:
         })
         
         mock_result = self.sample_crossmatch_result
-        self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
+        self.mock_client.launch_job.return_value.get_results.return_value = mock_result
         
         result = self.archive.crossmatch_sources(
             user_table=custom_table,
@@ -485,7 +486,7 @@ class TestEuclidArchive:
             
         try:
             mock_result = self.sample_crossmatch_result
-            self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
+            self.mock_client.launch_job.return_value.get_results.return_value = mock_result
             
             with patch('euclidkit.core.data_access.load_table', return_value=self.sample_coordinates):
                 result = self.archive.crossmatch_sources(
@@ -497,27 +498,14 @@ class TestEuclidArchive:
         finally:
             os.unlink(f.name)
 
-    def test_crossmatch_sources_output_file(self):
-        """Test crossmatching with output file."""
-        with tempfile.NamedTemporaryFile(suffix='.fits', delete=False) as f:
-            output_path = f.name
-            
-        try:
-            mock_result = self.sample_crossmatch_result
-            self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
-            
-            with patch('astropy.table.Table.write') as mock_write:
-                result = self.archive.crossmatch_sources(
-                    user_table=self.sample_coordinates,
-                    radius=1.0,
-                    output_file=output_path
-                )
-                
-                mock_write.assert_called_once()
-                assert isinstance(result, Table)
-        finally:
-            if os.path.exists(output_path):
-                os.unlink(output_path)
+    def test_crossmatch_sources_output_file(self, tmp_path):
+        """Both the upload and final FITS write run; verify the final file itself."""
+        self.mock_client.launch_job.return_value.get_results.return_value = self.sample_crossmatch_result
+        output = tmp_path/'crossmatch.fits'
+        result = self.archive.crossmatch_sources(self.sample_coordinates, output_file=output)
+        saved = Table.read(output)
+        assert len(saved) == len(result) == 2
+        assert list(saved['object_id']) == list(result['object_id'])
 
     def test_crossmatch_sources_max_sources_limit(self):
         """Test crossmatching with max_sources limit."""
@@ -528,7 +516,7 @@ class TestEuclidArchive:
         })
         
         mock_result = self.sample_crossmatch_result
-        self.mock_client.query_object_async.return_value.get_results.return_value = mock_result
+        self.mock_client.launch_job.return_value.get_results.return_value = mock_result
         
         result = self.archive.crossmatch_sources(
             user_table=large_table,
@@ -604,6 +592,7 @@ class TestEuclidArchive:
                 )
                 
                 mock_save.assert_called_once()
+                assert len(result) == 1
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
@@ -624,9 +613,9 @@ class TestEuclidArchive:
             'separation_deg': [0.0, 0.0],
         })
 
-        with patch.object(self.archive, '_query_spectra_batch') as mock_oid:
-            with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
-                result = self.archive.query_spectra_sources(crossmatch_table=coord_table)
+        with patch.object(self.archive, '_query_spectra_batch') as mock_oid, \
+                patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+            result = self.archive.query_spectra_sources(crossmatch_table=coord_table)
 
         mock_oid.assert_not_called()
         mock_spatial.assert_called_once()
@@ -673,9 +662,9 @@ class TestEuclidArchive:
             'separation_deg': [0.0],
         })
 
-        with patch.object(self.archive, '_query_spectra_batch') as mock_oid:
-            with patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
-                self.archive.query_spectra_sources(crossmatch_table=coord_table)
+        with patch.object(self.archive, '_query_spectra_batch') as mock_oid, \
+                patch.object(self.archive, '_query_spectra_spatial_batch', return_value=spatial_result) as mock_spatial:
+            self.archive.query_spectra_sources(crossmatch_table=coord_table)
 
         mock_oid.assert_not_called()
         mock_spatial.assert_called_once()
@@ -802,19 +791,6 @@ class TestEuclidArchive:
         with pytest.raises(ValueError, match="Must provide crossmatch_table"):
             self.archive.query_spectra_sources()
 
-    def test_batch_processing(self):
-        """Test batch processing for large datasets."""
-        # Test the _batch_process method
-        large_data = list(range(2500))  # > batch_size of 1000
-        
-        def mock_process_func(batch):
-            return [x * 2 for x in batch]
-        
-        results = self.archive._batch_process(large_data, mock_process_func, batch_size=1000)
-        
-        assert len(results) == 2500
-        assert results[0] == 0
-        assert results[-1] == 4998
 
     def test_crossmatch_sources_forces_async_batches_over_2000_rows(self):
         """Crossmatch should force async batch jobs when input row count exceeds 2000."""
@@ -832,37 +808,25 @@ class TestEuclidArchive:
             assert call.kwargs['force_async'] is True
 
     def test_upload_user_table_from_file(self, tmp_path):
-        """Uploading from file should infer format and allow overwrite."""
-        table_path = tmp_path / 'sample.csv'
-        table_path.write_text('ra,dec\n10.0,2.0\n')
-
-        fake_job = Mock()
-        fake_job.jobid = 'job-42'
-        fake_job.phase = 'EXECUTING'
-        self.mock_client.upload_table.return_value = fake_job
-
-        result = self.archive.upload_user_table(
-            table=table_path,
-            table_name='user_table',
-            description='demo table',
-            overwrite=True,
-            verbose=True,
-        )
-
+        """File uploads are sanitized into a temporary VOTable, then cleaned up."""
+        table_path = tmp_path/'sample.csv'
+        table_path.write_text('RA deg,dec\n10.0,2.0\n')
+        captured = {}
+        def upload(**kwargs):
+            captured.update(kwargs)
+            captured['table'] = Table.read(kwargs['upload_resource'], format='votable')
+            return Mock(jobid='job-42', phase='EXECUTING')
+        self.mock_client.upload_table.side_effect = upload
+        result = self.archive.upload_user_table(table_path, 'user_table', description='demo',
+                                                 overwrite=True, verbose=True)
         self.mock_client.delete_user_table.assert_called_once_with(
-            table_name='user_table',
-            force_removal=True,
-            verbose=True,
-        )
-        self.mock_client.upload_table.assert_called_once_with(
-            upload_resource=str(table_path),
-            table_name='user_table',
-            table_description='demo table',
-            format='csv',
-            verbose=True,
-        )
-        assert result['job_id'] == 'job-42'
-        assert result['format'] == 'csv'
+            table_name='user_table', force_removal=True, verbose=True)
+        assert captured['format'] == 'votable'
+        assert captured['table'].colnames == ['ra_deg', 'dec']
+        assert captured['table']['ra_deg'][0] == 10.
+        assert not Path(captured['upload_resource']).exists()
+        assert table_path.read_text() == 'RA deg,dec\n10.0,2.0\n'
+        assert result['job_id'] == 'job-42' and result['format'] == 'votable'
 
     def test_upload_user_table_astropy_table(self):
         """Uploading an astropy Table defaults to VOTable format."""
@@ -875,7 +839,9 @@ class TestEuclidArchive:
             description=None,
         )
 
-        args, kwargs = self.mock_client.upload_table.call_args
-        assert kwargs['upload_resource'] is tbl
+        _, kwargs = self.mock_client.upload_table.call_args
+        assert kwargs['upload_resource'] is not tbl
+        assert kwargs['upload_resource'].colnames == tbl.colnames
+        np.testing.assert_array_equal(kwargs['upload_resource']['ra'], tbl['ra'])
         assert kwargs['format'] == 'votable'
         assert result['resource_type'] == 'table'
