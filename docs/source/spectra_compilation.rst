@@ -17,8 +17,8 @@ to ``spectra_source.source_id``, query by object ID:
      --crossmatch my_spectral_ids.fits \
      --output spectra_sources.fits \
      --match-mode object-id \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
 If your table only has positions, query by coordinates:
 
@@ -29,8 +29,8 @@ If your table only has positions, query by coordinates:
      --output spectra_sources.fits \
      --match-mode spatial \
      --radius 1.0 \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
 Then compile the returned spectra-source catalogue:
 
@@ -98,8 +98,8 @@ ID table or coordinate table:
    euclidkit query-spectra \
      --crossmatch my_spectral_ids_or_coordinates.fits \
      --output spectra_sources.fits \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
 Then export the local Datalabs spectra:
 
@@ -163,7 +163,7 @@ files, but writes FITS chunks instead of Parquet parts.
      --output-format fits \
      --max-extensions 1000
 
-The legacy FITS path supports IDR DEEP XML LambdaRange annotation and FITS
+The legacy FITS path supports public DR1 DEEP XML LambdaRange annotation and FITS
 metadata output. Resume behavior applies when output chunk files already exist
 and ``--overwrite`` is not provided. FITS compatibility mode defaults to one
 worker.
@@ -185,8 +185,8 @@ ignores the local ``--output-format parquet`` default.
      --prefix compiled_dl \
      --use-datalink \
      -L BOTH \
-     --environment IDR \
-     --schema sedm
+     --environment PDR --release DR1 \
+     --schema dr1
 
 In Datalink mode, ``-L RGS`` maps to ``SPECTRA_RGS`` retrieval,
 ``-L BGS`` maps to ``SPECTRA_BGS`` retrieval, and ``-L BOTH`` runs the two arms
@@ -214,7 +214,7 @@ and does not use Datalink.
      --chunk-size 2000 \
      --workers 8 \
      --lambda-range RGS \
-     --environment IDR
+     --environment PDR --release DR1
 
 This writes:
 
@@ -230,7 +230,7 @@ Raw-frame observation metadata
 
 Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
 ``obs_time_utc``, and ``pa`` from the archive raw-frame table. PDR/Q1 uses
-``q1.raw_frame``, IDR/DR1 uses ``dr1.raw_frame``, and OTF/REG use
+``q1.raw_frame`` (with ``--release Q1``), PDR/DR1 uses ``dr1.raw_frame``, and OTF/REG use
 ``sedm.raw_frame``. ``dithers-to-parquet`` matches raw-frame ``pointing_id`` to
 ``ptgid`` from the dither HDU and requires ``grism_wheel_pos`` to match the
 dither ``gwa_pos``. If ``ptgid`` is unavailable, it falls back to the parsed

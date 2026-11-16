@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 class CutoutGenerator:
     """Generator for Euclid image cutouts."""
     
-    def __init__(self, archive: Optional[EuclidArchive] = None, environment: str = 'PDR'):
+    def __init__(self, archive: Optional[EuclidArchive] = None, environment: str = 'PDR',
+                 data_release: Optional[str] = None):
         """
         Initialize cutout generator.
         
@@ -40,11 +41,15 @@ class CutoutGenerator:
         archive : EuclidArchive, optional
             Pre-initialized archive connection. If None, creates new one.
         environment : str
-            Archive environment: 'PDR', 'OTF', 'REG', or 'IDR'
+            Archive environment: 'PDR', 'OTF', 'REG', or 'IDR'.
+        data_release : str, optional
+            Public PDR release: 'DR1' (default) or 'Q1'.
         """
         if archive is None:
-            self.archive = EuclidArchive(environment=environment)
+            self.archive = EuclidArchive(environment=environment, data_release=data_release)
         else:
+            if data_release is not None and data_release.upper() != archive.data_release:
+                raise ValueError('data_release conflicts with the supplied archive client')
             self.archive = archive
         self._last_cutana_mosaic_query: Optional[str] = None
         
@@ -184,8 +189,8 @@ class CutoutGenerator:
         drop_noncutana_cols : bool, default True
             When False, keep additional user columns in output.
         idr_field : {'WIDE', 'DEEP'}, optional
-            IDR field selector used when resolving ``object_id`` values to
-            coordinates in ``environment='IDR'``. Defaults to 'WIDE' when
+            DR1/IDR field selector used when resolving ``object_id`` values to
+            coordinates in public DR1 or IDR. Defaults to 'WIDE' when
             omitted, matching ``EuclidArchive.crossmatch_sources`` behavior.
         idr_deep_partition : {'survey', 'mode', 'both'}, default 'survey'
             IDR DEEP MER partition used when ``idr_field='DEEP'``.
@@ -247,6 +252,7 @@ class CutoutGenerator:
             df_files, df_coords, output_file, ra_col, dec_col, bands, unit, size,
             keep_columns=not drop_noncutana_cols,
             environment=getattr(self.archive, 'environment', None),
+            data_release=getattr(self.archive, 'data_release', None),
         )
     
     def _normalize_sources(self, sources) -> pd.DataFrame:
@@ -411,9 +417,7 @@ class CutoutGenerator:
 
             result_tables = []
             if (
-                len(table_names) == 2
-                and table_names[0] == 'catalogue.mer_catalogue_wide_survey'
-                and table_names[1] == 'catalogue.mer_catalogue_wide_mode'
+                EuclidArchive._uses_idr_wide_fallback(table_names)
             ):
                 survey_result = _query_ids(upload_df, table_names[0])
                 if survey_result is not None and len(survey_result) > 0:
@@ -633,7 +637,7 @@ class CutoutGenerator:
             mosaics.mosaic_product_oid, mosaics.tile_index, mosaics.instrument_name,
             mosaics.filter_name, mosaics.ra AS image_ra, mosaics.dec AS image_dec
         FROM TAP_UPLOAD.{upload_name} AS u
-        JOIN sedm.mosaic_product AS mosaics
+        JOIN {self.archive._get_product_table_name('mosaic_product')} AS mosaics
           ON mosaics.tile_index = u.tile_index
         WHERE mosaics.datalabs_path IS NOT NULL
           AND mosaics.instrument_name='{instrument_name}'
@@ -715,7 +719,7 @@ class CutoutGenerator:
                    mosaics.file_name, mosaics.file_path, mosaics.datalabs_path,
                    mosaics.mosaic_product_oid, mosaics.tile_index, mosaics.instrument_name,
                    mosaics.filter_name, mosaics.ra AS image_ra, mosaics.dec AS image_dec
-            FROM sedm.mosaic_product AS mosaics
+            FROM {self.archive._get_product_table_name('mosaic_product')} AS mosaics
             WHERE mosaics.datalabs_path IS NOT NULL
               AND mosaics.instrument_name='{instrument_name}'
               AND (mosaics.fov IS NOT NULL AND CONTAINS(CIRCLE('ICRS', {ra}, {dec}, {radius_deg}), mosaics.fov)=1)
@@ -774,7 +778,7 @@ class CutoutGenerator:
                    frames.file_name, frames.file_path, frames.datalabs_path,
                    frames.instrument_name, frames.filter_name, frames.observation_id,
                    frames.ra AS image_ra, frames.dec AS image_dec
-            FROM sedm.calibrated_frame AS frames
+            FROM {self.archive._get_product_table_name('calibrated_frame')} AS frames
             WHERE frames.datalabs_path IS NOT NULL
               AND frames.instrument_name='{instrument_name}'
               AND (frames.fov IS NOT NULL AND CONTAINS(CIRCLE('ICRS', {ra}, {dec}, {radius_deg}), frames.fov)=1)
@@ -826,7 +830,7 @@ class CutoutGenerator:
                    frames.file_name, frames.file_path, frames.datalabs_path,
                    frames.instrument_name, frames.filter_name, frames.observation_id,
                    frames.ra AS image_ra, frames.dec AS image_dec
-            FROM observation_stack AS frames
+            FROM {self.archive._get_product_table_name('observation_stack') if self.archive.environment == 'PDR' else 'observation_stack'} AS frames
             WHERE frames.datalabs_path IS NOT NULL
               AND frames.instrument_name='{instrument_name}'
               AND (frames.fov IS NOT NULL AND CONTAINS(CIRCLE('ICRS', {ra}, {dec}, {radius_deg}), frames.fov)=1)

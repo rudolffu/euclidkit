@@ -3,6 +3,7 @@ Command line interface for cutout generation.
 """
 
 import click
+from euclidkit.cli.archive_options import validate_archive_selection
 import os
 import sys
 from pathlib import Path
@@ -11,6 +12,8 @@ import json
 
 
 @click.command(short_help='Generate Euclid image cutouts.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option(
     '--source', '-s',
     help='Single source: object_id or "ra,dec" (degrees)'
@@ -73,6 +76,7 @@ import json
     is_flag=True,
     help='Verbose output'
 )
+@validate_archive_selection
 def cutouts(
     source: Optional[str],
     sources_file: Optional[str],
@@ -85,8 +89,7 @@ def cutouts(
     product_type: str,
     environment: str,
     nisp_filters: Optional[str],
-    verbose: bool
-):
+    verbose: bool, data_release=None):
     """
     Generate Euclid image cutouts.
     
@@ -156,7 +159,7 @@ def cutouts(
     
     try:
         # Initialize cutout generator
-        generator = CutoutGenerator(environment=environment)
+        generator = CutoutGenerator(environment=environment, data_release=data_release)
         
         # Generate cutouts
         cutout_size = size * u.arcsec

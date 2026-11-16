@@ -93,7 +93,7 @@ def test_invalid_ids_before_submission(archive, ids):
 def test_missing_id_and_environment(archive):
     with pytest.raises(ValueError, match='object_id'):
         archive.query_morphology(Table({'ra': [1]}))
-    archive.environment = 'PDR'
+    archive = EuclidArchive(environment='PDR', data_release='Q1')
     with pytest.raises(ValueError, match='IDR'):
         archive.query_morphology(Table({'object_id': [1]}))
 

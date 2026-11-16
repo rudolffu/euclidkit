@@ -75,6 +75,8 @@ def spectra_to_parquet(
     on_error: str = "fail",
     show_progress: bool = False,
     limit: int | None = None,
+    environment: str = "PDR",
+    data_release: str | None = None,
 ) -> RawParquetStats:
     """Export catalog-listed combined spectra HDUs to parquet parts."""
     if chunk_size <= 0:
@@ -87,6 +89,10 @@ def spectra_to_parquet(
         raise ValueError("--on-error must be 'fail' or 'skip'")
     if limit is not None and limit <= 0:
         raise ValueError("--limit must be a positive integer")
+
+    from euclidkit.core.archive_service import ArchiveService
+    service = ArchiveService(environment, data_release)
+    data_release = service.data_release
 
     target_lrange = str(lambda_range).upper() if lambda_range else None
     if target_lrange not in {None, "RGS", "BGS"}:
@@ -158,6 +164,8 @@ def spectra_to_parquet(
             "export_type": "raw_spectra_parquet",
             "catalog_table": str(Path(catalog_table)),
             "requested_rows": stats.requested_rows,
+            "environment": service.environment,
+            "data_release": service.data_release,
             "exported_rows": stats.exported_rows,
             "skipped_rows": stats.skipped_rows,
             "failed_rows": stats.failed_rows,
@@ -189,6 +197,7 @@ def dithers_to_parquet(
     on_error: str = "fail",
     show_progress: bool = False,
     environment: str = "PDR",
+    data_release: str | None = None,
     credentials_file: str | None = None,
     query_raw_frame: bool = True,
 ) -> DithersParquetStats:
@@ -201,6 +210,10 @@ def dithers_to_parquet(
         raise ValueError("--workers must be positive")
     if on_error not in {"fail", "skip"}:
         raise ValueError("--on-error must be 'fail' or 'skip'")
+
+    from euclidkit.core.archive_service import ArchiveService
+    service = ArchiveService(environment, data_release)
+    data_release = service.data_release
 
     target_lrange = str(lambda_range).upper() if lambda_range else None
     if target_lrange not in {None, "RGS", "BGS"}:
@@ -219,8 +232,8 @@ def dithers_to_parquet(
     normalized_environment = str(environment).upper()
     raw_frame_archive = None
     if query_raw_frame:
-        stats.raw_frame_table = _raw_frame_table_name(normalized_environment)
-        raw_frame_archive = _open_raw_frame_archive(normalized_environment, credentials_file)
+        stats.raw_frame_table = _raw_frame_table_name(normalized_environment, data_release)
+        raw_frame_archive = _open_raw_frame_archive(normalized_environment, credentials_file, data_release)
 
     failures: list[dict[str, Any]] = []
     combined_part_idx = 1
@@ -279,6 +292,7 @@ def dithers_to_parquet(
                         dither_rows,
                         archive=raw_frame_archive,
                         environment=normalized_environment,
+                        data_release=data_release,
                     )
                     stats.raw_frame_rows += raw_frame_rows
                     stats.raw_frame_spectroimage_rows += spectroimage_rows
@@ -329,6 +343,8 @@ def dithers_to_parquet(
             "dither_output_files": stats.dither_output_files,
             "failures_path": stats.failures_path,
             "raw_frame_table": stats.raw_frame_table,
+            "environment": normalized_environment,
+            "data_release": data_release,
             "raw_frame_rows": stats.raw_frame_rows,
             "raw_frame_spectroimage_rows": stats.raw_frame_spectroimage_rows,
             "dither_rows_with_raw_frame_metadata": stats.dither_rows_with_raw_frame_metadata,
@@ -544,23 +560,15 @@ def _read_catalog_table(catalog_path: Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported catalog table format: {catalog_path}")
 
 
-def _raw_frame_table_name(environment: str) -> str:
-    table_by_environment = {
-        "PDR": "q1.raw_frame",
-        "IDR": "dr1.raw_frame",
-        "OTF": "sedm.raw_frame",
-        "REG": "sedm.raw_frame",
-    }
-    normalized = str(environment).upper()
-    if normalized not in table_by_environment:
-        raise ValueError("environment must be one of: PDR, IDR, OTF, REG")
-    return table_by_environment[normalized]
+def _raw_frame_table_name(environment: str, data_release: str | None = None) -> str:
+    from euclidkit.core.archive_service import ArchiveService
+    return ArchiveService(environment, data_release).product_table('raw_frame')
 
 
-def _open_raw_frame_archive(environment: str, credentials_file: str | None):
+def _open_raw_frame_archive(environment: str, credentials_file: str | None, data_release=None):
     from euclidkit.core.data_access import EuclidArchive
 
-    archive = EuclidArchive(environment=environment)
+    archive = EuclidArchive(environment=environment, data_release=data_release)
     archive.login(credentials_file=credentials_file)
     return archive
 
@@ -570,6 +578,7 @@ def _query_raw_frame_lookup(
     *,
     archive: Any,
     environment: str,
+    data_release: str | None = None,
 ) -> tuple[dict[int, dict[str, Any]], int, int]:
     pointings = sorted(
         {
@@ -592,7 +601,7 @@ def _query_raw_frame_lookup(
         tmp_name = tmp_file.name
 
     try:
-        table_name = _raw_frame_table_name(environment)
+        table_name = _raw_frame_table_name(environment, data_release)
         upload_name = f"dither_pointings_{np.random.randint(10000, 99999)}"
         query = f"""
         SELECT

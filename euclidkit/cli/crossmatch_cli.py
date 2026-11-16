@@ -3,13 +3,19 @@
 Command line interface for crossmatching functionality.
 """
 
-import click
 import sys
 from pathlib import Path
 from typing import Optional
 
+import click
+
+from euclidkit.cli.archive_options import validate_archive_selection
+from euclidkit.core.archive_service import ArchiveService
+
 
 @click.command(short_help='Crossmatch sources with Euclid MER.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--input', '-i', required=False, type=click.Path(exists=True),
               help='Input source table (CSV, FITS, or VOTable)')
 @click.option('--user-table-name', type=str,
@@ -24,10 +30,10 @@ from typing import Optional
               help='Dec column name in input table (default: dec)')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
-@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+@click.option('--field', '--idr-field', 'idr_field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
-              help='IDR field selection (only used when --environment=IDR)')
-@click.option('--idr-deep-partition',
+              help='DR1/IDR field selection')
+@click.option('--deep-partition', '--idr-deep-partition', 'idr_deep_partition',
               type=click.Choice(['survey', 'mode', 'both']),
               default='survey',
               show_default=True,
@@ -45,10 +51,11 @@ from typing import Optional
 @click.option('--drop-empty-columns', is_flag=True,
               help='Drop entirely null/missing columns from the final crossmatch output')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@validate_archive_selection
 def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str, radius: float, ra_col: str, dec_col: str,
                environment: str, idr_field: str, idr_deep_partition: str, credentials: Optional[str],
                max_sources: Optional[int], match_mode: str, full_async: bool,
-               async_chunk_size: int, drop_empty_columns: bool, verbose: bool):
+               async_chunk_size: int, drop_empty_columns: bool, verbose: bool, data_release=None):
     """
     Crossmatch user source table with Euclid MER catalogue.
     
@@ -69,7 +76,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
             raise click.ClickException("Provide exactly one of --input or --user-table-name")
 
         # Initialize archive client
-        archive = EuclidArchive(environment=environment)
+        archive = EuclidArchive(environment=environment, data_release=data_release)
         
         # Login
         if credentials:
@@ -91,17 +98,17 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
                 click.echo(f"Search radius: {radius} arcsec")
             if max_sources:
                 click.echo(f"Processing max {max_sources} sources")
-            if environment == 'IDR':
-                click.echo(f"IDR field: {selected_idr_field}")
+            if ArchiveService(environment, data_release).has_fields:
+                click.echo(f"Field: {selected_idr_field}")
                 if selected_idr_field == 'DEEP':
-                    click.echo(f"IDR DEEP partition: {idr_deep_partition}")
+                    click.echo(f"DEEP partition: {idr_deep_partition}")
             if full_async:
                 click.echo("Full-table async mode enabled (no batching)")
                 click.echo(f"Async chunk size: {async_chunk_size}")
             if drop_empty_columns:
                 click.echo("Dropping entirely empty columns from final output")
 
-        # Determine effective output path (IDR requires prefixed filenames)
+        # Preserve legacy IDR output prefixes; public workflows use the requested path.
         output_path = Path(output)
         effective_output_path = output_path
         if environment == 'IDR':
@@ -129,7 +136,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
                 full_async=full_async,
                 drop_empty_columns=drop_empty_columns,
             )
-            if environment == 'IDR':
+            if ArchiveService(environment, data_release).has_fields:
                 crossmatch_kwargs['idr_field'] = selected_idr_field
                 crossmatch_kwargs['idr_deep_partition'] = idr_deep_partition
             results = archive.crossmatch_user_table(**crossmatch_kwargs)
@@ -146,7 +153,7 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
                 async_chunk_size=async_chunk_size,
                 drop_empty_columns=drop_empty_columns,
             )
-            if environment == 'IDR':
+            if ArchiveService(environment, data_release).has_fields:
                 crossmatch_kwargs['idr_field'] = selected_idr_field
                 crossmatch_kwargs['idr_deep_partition'] = idr_deep_partition
             results = archive.crossmatch_sources(**crossmatch_kwargs)
@@ -193,6 +200,8 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
 
 
 @click.command(short_help='Query spectra-source rows by object ID or position.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
               help='Input table with Euclid object_id/object_id_euclid or coordinates')
 @click.option('--output', '-o', required=True, type=click.Path(),
@@ -211,16 +220,17 @@ def crossmatch(input: Optional[str], user_table_name: Optional[str], output: str
               help='Matching mode: auto (default), object-id, or spatial')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
-@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+@click.option('--field', '--idr-field', 'idr_field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
-              help='IDR field selection (only used when --environment=IDR)')
+              help='DR1/IDR field selection')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@validate_archive_selection
 def query_spectra(crossmatch: Optional[str], output: str,
                   combine_output: Optional[str], max_spectra: Optional[int],
                   radius: float, ra_col: str, dec_col: str, match_mode: str,
-                  environment: str, idr_field: str, credentials: Optional[str], verbose: bool):
+                  environment: str, idr_field: str, credentials: Optional[str], verbose: bool, data_release=None):
     """
     Query spectral sources for objects from an object-ID or coordinate table.
     
@@ -248,7 +258,7 @@ def query_spectra(crossmatch: Optional[str], output: str,
     
     try:
         # Initialize archive client
-        archive = EuclidArchive(environment=environment)
+        archive = EuclidArchive(environment=environment, data_release=data_release)
         
         # Login
         if credentials:
@@ -258,8 +268,8 @@ def query_spectra(crossmatch: Optional[str], output: str,
         
         if verbose:
             click.echo(f"Connected to {environment} environment")
-            if environment == 'IDR':
-                click.echo(f"IDR field: {idr_field.upper()}")
+            if ArchiveService(environment, data_release).has_fields:
+                click.echo(f"Field: {idr_field.upper()}")
             click.echo(f"Match mode: {match_mode}")
             if match_mode == 'spatial':
                 click.echo(f"Search radius: {radius} arcsec")
@@ -273,7 +283,7 @@ def query_spectra(crossmatch: Optional[str], output: str,
         results = archive.query_spectra_sources(
             crossmatch_table=crossmatch_table,
             output_file=output,
-            idr_field=idr_field.upper() if environment == 'IDR' else None,
+            idr_field=idr_field.upper() if ArchiveService(environment, data_release).has_fields else None,
             match_mode=match_mode,
             radius=radius,
             ra_col=ra_col,
@@ -331,15 +341,18 @@ def query_spectra(crossmatch: Optional[str], output: str,
             archive.logout()
 
 
-@click.command(name='query-zspe', short_help='Query IDR SPE redshift candidates.')
+@click.command(name='query-zspe', short_help='Query SPE redshift candidates.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
+@click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']), default='PDR')
 @click.option('--crossmatch', '-x', required=True, type=click.Path(exists=True),
               help='Input table containing Euclid object_id values')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output SPE redshift candidate table')
 @click.option('--object-type', type=click.Choice(['qso', 'galaxy']), default='qso',
               show_default=True, help='SPE candidate object type')
-@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
-              show_default=True, help='IDR field selection')
+@click.option('--field', '--idr-field', 'idr_field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+              show_default=True, help='DR1/IDR field selection')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--full-async', is_flag=True,
@@ -347,11 +360,12 @@ def query_spectra(crossmatch: Optional[str], output: str,
 @click.option('--async-chunk-size', type=int, default=500000, show_default=True,
               help='Rows per async chunk when --full-async is used on large tables')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@validate_archive_selection
 def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
                credentials: Optional[str], full_async: bool, async_chunk_size: int,
-               verbose: bool):
+               verbose: bool, data_release=None, environment='PDR'):
     """
-    Query IDR SPE redshift candidates by object_id.
+    Query SPE redshift candidates by object_id.
 
     WIDE queries search wide_survey first, then query wide only for objects
     without a wide_survey candidate.
@@ -366,7 +380,7 @@ def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
         logging.basicConfig(level=logging.INFO)
 
     try:
-        archive = EuclidArchive(environment='IDR')
+        archive = EuclidArchive(environment=environment, data_release=data_release)
 
         if credentials:
             archive.login(credentials_file=credentials)
@@ -374,10 +388,10 @@ def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
             archive.login()
 
         if verbose:
-            click.echo("Connected to IDR environment")
+            click.echo(f"Connected to {environment} environment")
             click.echo(f"Input table: {crossmatch}")
             click.echo(f"Object type: {object_type}")
-            click.echo(f"IDR field: {idr_field.upper()}")
+            click.echo(f"Field: {idr_field.upper()}")
             if full_async:
                 click.echo("Full-table async mode enabled")
                 click.echo(f"Async chunk size: {async_chunk_size}")
@@ -433,6 +447,8 @@ def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
 
 
 @click.command(name='query-segmap', short_help='Query MER segmentation-map metadata.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--input', '-i', required=True, type=click.Path(exists=True),
               help='Input table containing SEGMENTATION_MAP_ID from crossmatch results')
 @click.option('--output', '-o', required=True, type=click.Path(),
@@ -442,8 +458,9 @@ def query_zspe(crossmatch: str, output: str, object_type: str, idr_field: str,
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@validate_archive_selection
 def query_segmap(input: str, output: str, environment: str,
-                 credentials: Optional[str], verbose: bool):
+                 credentials: Optional[str], verbose: bool, data_release=None):
     """
     Query MER segmentation-map metadata by SEGMENTATION_MAP_ID tile index.
 
@@ -461,7 +478,7 @@ def query_segmap(input: str, output: str, environment: str,
         logging.basicConfig(level=logging.INFO)
 
     try:
-        archive = EuclidArchive(environment=environment)
+        archive = EuclidArchive(environment=environment, data_release=data_release)
 
         if credentials:
             archive.login(credentials_file=credentials)
@@ -498,6 +515,8 @@ def query_segmap(input: str, output: str, environment: str,
 
 
 @click.command(name='query-cutana', short_help='Build Cutana input from source tables.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--sources', '-s', required=True, type=click.Path(exists=True),
               help='Input table with object_id or RA/Dec columns')
 @click.option('--output', '-o', required=True, type=click.Path(),
@@ -514,10 +533,10 @@ def query_segmap(input: str, output: str, environment: str,
               help='Drop or keep non-Cutana columns from the input table')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment (default: PDR)')
-@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+@click.option('--field', '--idr-field', 'idr_field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
-              help='IDR field selection (only used when --environment=IDR)')
-@click.option('--idr-deep-partition',
+              help='DR1/IDR field selection')
+@click.option('--deep-partition', '--idr-deep-partition', 'idr_deep_partition',
               type=click.Choice(['survey', 'mode', 'both']),
               default='survey',
               show_default=True,
@@ -525,10 +544,11 @@ def query_segmap(input: str, output: str, environment: str,
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@validate_archive_selection
 def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optional[str],
                  cutout_size: str, cutout_size_value: float, drop_noncutana_cols: bool,
                  environment: str, idr_field: str, idr_deep_partition: str,
-                 credentials: Optional[str], verbose: bool):
+                 credentials: Optional[str], verbose: bool, data_release=None):
     """
     Generate a Cutana input catalogue from a source table.
 
@@ -548,7 +568,7 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
     if verbose:
         logging.basicConfig(level=logging.INFO)
 
-    generator = CutoutGenerator(environment=environment)
+    generator = CutoutGenerator(environment=environment, data_release=data_release)
     archive = generator.archive
 
     try:
@@ -572,7 +592,7 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
             cutout_size=cutout_size,
             cutout_size_value=cutout_size_value,
             drop_noncutana_cols=drop_noncutana_cols,
-            idr_field=idr_field.upper() if environment == 'IDR' else None,
+            idr_field=idr_field.upper() if ArchiveService(environment, data_release).has_fields else None,
             idr_deep_partition=idr_deep_partition,
         )
 
@@ -591,6 +611,8 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
 
 
 @click.command(name='upload-table', short_help='Upload a local table to Euclid TAP.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--input', '-i', required=True, type=click.Path(exists=True),
               help='Local table file to upload (FITS, CSV, VOTable, etc.)')
 @click.option('--table-name', '-t', required=True,
@@ -606,8 +628,9 @@ def query_cutana(sources: str, output: str, instrument: str, nisp_filters: Optio
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+@validate_archive_selection
 def upload_table(input: str, table_name: str, description: Optional[str], fmt: Optional[str],
-                 overwrite: bool, environment: str, credentials: Optional[str], verbose: bool):
+                 overwrite: bool, environment: str, credentials: Optional[str], verbose: bool, data_release=None):
     """
     Upload a local table to the Euclid TAP user workspace.
     """
@@ -620,7 +643,7 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
         logging.basicConfig(level=logging.INFO)
     
     try:
-        archive = EuclidArchive(environment=environment)
+        archive = EuclidArchive(environment=environment, data_release=data_release)
         if credentials:
             archive.login(credentials_file=credentials)
         else:
@@ -654,6 +677,8 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
 
 
 @click.command(short_help='Export spectra to Parquet or FITS.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--spectra-table', '-s', required=True, type=click.Path(exists=True),
               help='Spectral sources table from query-spectra command')
 @click.option('--output-dir', '-o', required=True, type=click.Path(),
@@ -673,15 +698,15 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Retrieve spectra via Euclid datalink instead of local datalabs_path/file_name')
 @click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']),
               default='PDR', help='Archive environment for datalink/FITS compatibility mode')
-@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
+@click.option('--field', '--idr-field', 'idr_field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE',
               show_default=True,
-              help='IDR field selection (used by FITS mode to resolve DEEP BGS/RGS XMLs)')
+              help='DR1/IDR field selection for DEEP FITS XMLs')
 @click.option('--credentials', '-c', type=click.Path(exists=True),
               help='Credentials file path for datalink mode')
 @click.option('--retrieval-type', type=click.Choice(['ALL', 'SPECTRA_BGS', 'SPECTRA_RGS']),
               default='SPECTRA_RGS', show_default=True,
               help='Datalink retrieval type (legacy; unified arm selection is controlled by --lambda-range/-L)')
-@click.option('--schema', type=str, default='sedm', show_default=True,
+@click.option('--schema', type=str, default=None,
               help='Datalink schema value (used with --use-datalink)')
 @click.option('--limit', type=int, default=None,
               help='Process only the first N rows from spectra table (useful for quick tests)')
@@ -698,12 +723,13 @@ def upload_table(input: str, table_name: str, description: Optional[str], fmt: O
               help='Disable parquet export progress')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 @click.pass_context
+@validate_archive_selection
 def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, prefix: str,
                    output_format: str, max_extensions: int, chunk_size: int, overwrite: bool,
                    use_datalink: bool, environment: str, idr_field: str,
                    credentials: Optional[str], retrieval_type: str, schema: str,
                    limit: Optional[int], workers: Optional[int], lambda_range: str,
-                   on_error: str, progress: Optional[bool], verbose: bool):
+                   on_error: str, progress: Optional[bool], verbose: bool, data_release=None):
     """
     Compile local Datalabs spectra to parquet by default, or FITS via compatibility modes.
 
@@ -801,7 +827,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                 )
             sources_for_datalink = dedup_sources
 
-            archive = EuclidArchive(environment=environment)
+            archive = EuclidArchive(environment=environment, data_release=data_release)
             if credentials:
                 archive.login(credentials_file=credentials)
             else:
@@ -818,7 +844,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                     output_dir=output_dir,
                     output_prefix=rgs_prefix,
                     retrieval_type='SPECTRA_RGS',
-                    schema=schema,
+                    schema=schema or ArchiveService(environment, data_release).product_schema,
                     overwrite=overwrite,
                 )
                 output_files.extend(rgs_files)
@@ -838,7 +864,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                     output_dir=output_dir,
                     output_prefix=bgs_prefix,
                     retrieval_type='SPECTRA_BGS',
-                    schema=schema,
+                    schema=schema or ArchiveService(environment, data_release).product_schema,
                     overwrite=overwrite,
                 )
                 output_files.extend(bgs_files)
@@ -858,7 +884,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                     output_dir=output_dir,
                     output_prefix=prefix,
                     retrieval_type=retrieval_selected,
-                    schema=schema,
+                    schema=schema or ArchiveService(environment, data_release).product_schema,
                     overwrite=overwrite,
                 )
                 metadata_file = compiler.create_metadata_table(
@@ -906,6 +932,8 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                         on_error=on_error,
                         show_progress=show_progress,
                         limit=limit,
+                        environment=environment,
+                        data_release=data_release,
                     )))
                 total_exported = sum(stats.exported_rows for _, stats in stats_by_arm)
                 total_requested = sum(stats.requested_rows for _, stats in stats_by_arm)
@@ -925,6 +953,8 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
                     on_error=on_error,
                     show_progress=show_progress,
                     limit=limit,
+                    environment=environment,
+                    data_release=data_release,
                 )
                 click.echo("Parquet export completed successfully!")
                 _echo_raw_parquet_stats(stats, label="parquet")
@@ -943,8 +973,8 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
             click.echo("Output format: fits")
             click.echo(f"Chunk workers: {fits_workers}")
             click.echo(f"LambdaRange selection: {selected_lambda}")
-            if environment == 'IDR':
-                click.echo(f"IDR field: {idr_field.upper()}")
+            if ArchiveService(environment, data_release).has_fields:
+                click.echo(f"Field: {idr_field.upper()}")
 
         if target_output_dir.exists() and any(target_output_dir.iterdir()) and not overwrite:
             click.echo(
@@ -959,7 +989,7 @@ def compile_spectra(ctx: click.Context, spectra_table: str, output_dir: str, pre
             if not confirmed:
                 overwrite = False
 
-        is_idr_deep = environment == 'IDR' and idr_field.upper() == 'DEEP'
+        is_idr_deep = ArchiveService(environment, data_release).has_fields and idr_field.upper() == 'DEEP'
         if not is_idr_deep and selected_lambda in {'BGS', 'BOTH'}:
             click.echo(
                 f"Warning: {environment} {idr_field.upper()} only provides RGS in FITS mode; "
@@ -1162,6 +1192,8 @@ def compile_segmap(input: str, output_dir: str, size_arcsec: float, overwrite: b
     name='dithers-to-parquet',
     short_help='Export dither spectra to Parquet.',
 )
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--catalog-table', required=True, type=click.Path(exists=True),
               help='Catalog table with datalabs_path, file_name, and hdu_index')
 @click.option('--output-prefix', required=True, type=click.Path(),
@@ -1187,11 +1219,12 @@ def compile_segmap(input: str, output_dir: str, size_arcsec: float, overwrite: b
               help='Show export progress')
 @click.option('--no-progress', 'progress', flag_value=False,
               help='Disable export progress')
+@validate_archive_selection
 def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: int,
                            workers: Optional[int], lambda_range: Optional[str],
                            environment: str, credentials: Optional[str],
                            dithers_only: bool,
-                           overwrite: bool, on_error: str, progress: Optional[bool]):
+                           overwrite: bool, on_error: str, progress: Optional[bool], data_release=None):
     """Export local Datalabs combined and per-dither SIR spectra to parquet."""
     from euclidkit.core.spectra_parquet import dithers_to_parquet
 
@@ -1208,6 +1241,7 @@ def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: i
             on_error=on_error,
             show_progress=show_progress,
             environment=environment,
+            data_release=data_release,
             credentials_file=credentials,
         )
         click.echo(
@@ -1238,21 +1272,25 @@ def dithers_to_parquet_cli(catalog_table: str, output_prefix: str, chunk_size: i
         sys.exit(1)
 
 
-@click.command(name='query-morph', short_help='Query IDR MER morphology by object ID.')
+@click.command(name='query-morph', short_help='Query MER morphology by object ID.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
+@click.option('--environment', '-e', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']), default='PDR')
 @click.option('--input', '-i', 'input_file', required=True, type=click.Path(exists=True),
               help='Local table containing object_id (case-insensitive).')
 @click.option('--output', '-o', required=True, type=click.Path(),
               help='Output inner join of matched input rows and morphology.')
-@click.option('--idr-field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE', show_default=True)
-@click.option('--idr-deep-partition', type=click.Choice(['survey', 'mode', 'both']),
+@click.option('--field', '--idr-field', 'idr_field', type=click.Choice(['WIDE', 'DEEP']), default='WIDE', show_default=True)
+@click.option('--deep-partition', '--idr-deep-partition', 'idr_deep_partition', type=click.Choice(['survey', 'mode', 'both']),
               default='survey', show_default=True)
 @click.option('--credentials', '-c', type=click.Path(exists=True))
 @click.option('--full-async', is_flag=True, help='Use TAP async jobs with server-side WIDE fallback.')
 @click.option('--async-chunk-size', type=click.IntRange(min=1), default=500000, show_default=True)
 @click.option('--verbose', '-v', is_flag=True)
+@validate_archive_selection
 def query_morph(input_file, output, idr_field, idr_deep_partition, credentials,
-                full_async, async_chunk_size, verbose):
-    """Query compact MER morphology measurements and uncertainties (IDR only).
+                full_async, async_chunk_size, verbose, data_release=None, environment='PDR'):
+    """Query compact MER morphology measurements and uncertainties (public DR1 or IDR).
 
     WIDE searches survey first, then mode for unmatched IDs. DEEP queries the
     selected partitions, with survey precedence when both contain the same ID.
@@ -1266,7 +1304,7 @@ def query_morph(input_file, output, idr_field, idr_deep_partition, credentials,
     archive = None
     try:
         source = load_table(input_file)
-        archive = EuclidArchive(environment='IDR')
+        archive = EuclidArchive(environment=environment, data_release=data_release)
         archive.login(credentials_file=credentials) if credentials else archive.login()
         result = archive.query_morphology(
             source, output_file=output, idr_field=idr_field,
@@ -1294,17 +1332,20 @@ def query_morph(input_file, output, idr_field, idr_deep_partition, credentials,
 
 
 @click.command(name='download-cutana-alternatives', short_help='Download alternate Cutana mosaics.')
+@click.option('--release', 'data_release', type=click.Choice(['DR1', 'Q1']), default=None,
+              help='Public release (PDR only; default DR1).')
 @click.option('--candidates', required=True, type=click.Path(exists=True),
               help='The .alternatives.csv written by query-cutana.')
 @click.option('--output-dir', required=True, type=click.Path())
-@click.option('--schema', default='sedm', show_default=True, help='Archive product schema.')
+@click.option('--schema', default=None, help='Product schema override; default follows the public release.')
 @click.option('--environment', type=click.Choice(['PDR', 'IDR', 'OTF', 'REG']), default='PDR')
 @click.option('--credentials', type=click.Path(exists=True))
-def download_cutana_alternatives(candidates, output_dir, schema, environment, credentials):
+@validate_archive_selection
+def download_cutana_alternatives(candidates, output_dir, schema, environment, credentials, data_release=None):
     """Download distinct unselected mosaic files, resuming existing nonempty files."""
     from euclidkit.core.cutana_catalogue import download_alternatives
     from euclidkit.core.data_access import EuclidArchive
-    archive = EuclidArchive(environment=environment)
+    archive = EuclidArchive(environment=environment, data_release=data_release)
     try:
         archive.login(credentials_file=credentials) if credentials else archive.login()
         paths = download_alternatives(archive, candidates, output_dir, schema)

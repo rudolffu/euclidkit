@@ -83,15 +83,19 @@ class SpectrumLoader:
         self,
         euclid_client: Any,
         source_id: Union[str, int],
-        schema: str = 'sedm',
+        schema: Optional[str] = None,
         retrieval_type: str = 'SPECTRA_RGS',
+        data_release: Optional[str] = None,
     ) -> 'ExtensionHDU':
         """
         Retrieve a spectrum via Euclid datalink without extracting per-source files.
 
         This bypasses ``get_spectrum`` directory checks by using ``load_data`` and
-        reading the returned zip in-memory.
+        reading the returned zip in-memory. The default schema follows the
+        client service and optional public data_release (DR1 by default on PDR).
         """
+        from euclidkit.core.archive_service import product_schema_for_client
+        schema = product_schema_for_client(euclid_client, schema, data_release)
         params_dict = {
             'ID': f"{schema} {source_id}",
             'SCHEMA': schema,
@@ -888,8 +892,9 @@ class SpectrumCompiler:
         output_prefix: str = "compiled_spectra",
         source_id_col: str = 'source_id',
         retrieval_type: str = 'SPECTRA_RGS',
-        schema: str = 'sedm',
+        schema: Optional[str] = None,
         overwrite: bool = True,
+        data_release: Optional[str] = None,
     ) -> List[str]:
         """
         Compile spectra by retrieving each source via Euclid datalink.
@@ -897,6 +902,8 @@ class SpectrumCompiler:
         If ``overwrite`` is False, existing chunk files are kept and skipped
         (resume mode).
         """
+        from euclidkit.core.archive_service import product_schema_for_client
+        schema = product_schema_for_client(euclid_client, schema, data_release)
         output_dir = Path(output_dir)
         ensure_dir(output_dir)
 

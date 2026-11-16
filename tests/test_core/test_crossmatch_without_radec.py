@@ -11,7 +11,7 @@ from euclidkit.core.data_access import EuclidArchive
 
 def test_drop_empty_table_columns_null_semantics():
     """Only all-null/missing columns should be pruned."""
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     table = Table()
     table['object_id'] = [1, 2]
     table['drop_none'] = [None, None]
@@ -37,7 +37,7 @@ def test_drop_empty_table_columns_null_semantics():
 
 def test_drop_empty_table_columns_keeps_zero_row_schema():
     """Zero-row tables should not lose schema by vacuous truth."""
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     table = Table({'object_id': [], 'empty_float': []}, dtype=[int, float])
 
     cleaned, dropped = arch._drop_empty_table_columns(table)
@@ -183,7 +183,7 @@ def test_crossmatch_sources_idr_wide_uses_mode_only_for_unmatched_rows():
 def test_crossmatch_sources_drop_empty_columns_sync_output(tmp_path):
     """Sync local crossmatch should prune final table before save and return."""
     user_table = Table({'source_id': [1, 2], 'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     arch.euclid = Mock()
     arch._logged_in = True
     batch_result = Table({
@@ -213,7 +213,7 @@ def test_crossmatch_sources_drop_empty_columns_sync_output(tmp_path):
 def test_crossmatch_sources_keep_empty_columns_by_default(tmp_path):
     """Default local crossmatch behavior should preserve empty columns."""
     user_table = Table({'source_id': [1], 'ra': [150.0], 'dec': [2.0]})
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     arch.euclid = Mock()
     arch._logged_in = True
     batch_result = Table({'source_id': [1], 'object_id': [101], 'all_nan': [np.nan]})
@@ -238,7 +238,7 @@ def test_spatial_crossmatch_contains_expression(monkeypatch):
         'DECCAT': [2.0],
     })
 
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     arch.euclid = Mock()
     arch._logged_in = True
 
@@ -275,7 +275,7 @@ def test_spatial_crossmatch_contains_expression(monkeypatch):
 def test_crossmatch_sources_full_async(tmp_path):
     """full_async should submit a single async job and return metadata."""
     user_table = Table({'ra': [150.0, 151.0], 'dec': [2.0, 2.1]})
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     arch.euclid = Mock()
     arch._logged_in = True
 
@@ -323,7 +323,7 @@ def test_crossmatch_sources_full_async_chunked_persists_and_merges(tmp_path):
         'ra': [150.0, 151.0, 152.0, 153.0, 154.0],
         'dec': [2.0, 2.1, 2.2, 2.3, 2.4],
     })
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     arch.euclid = Mock()
     arch._logged_in = True
 
@@ -386,7 +386,7 @@ def test_crossmatch_sources_full_async_chunked_persists_and_merges(tmp_path):
     manifest = json.loads(manifest_path.read_text())
     assert len(manifest['chunks']) == 3
     assert [c['status'] for c in manifest['chunks']] == ['COMPLETED', 'COMPLETED', 'COMPLETED']
-    assert [c['mer_table'] for c in manifest['chunks']] == ['catalogue.mer_catalogue'] * 3
+    assert [c['mer_table'] for c in manifest['chunks']] == ['q1.mer_catalogue'] * 3
 
     arch.euclid.remove_jobs.assert_any_call(['job-10'])
     arch.euclid.remove_jobs.assert_any_call(['job-20'])
@@ -400,7 +400,7 @@ def test_crossmatch_sources_full_async_chunked_prunes_final_only(tmp_path):
         'ra': [150.0, 151.0, 152.0],
         'dec': [2.0, 2.1, 2.2],
     })
-    arch = EuclidArchive(environment='PDR')
+    arch = EuclidArchive(environment='PDR', data_release='Q1')
     arch.euclid = Mock()
     arch._logged_in = True
 

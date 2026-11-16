@@ -14,8 +14,8 @@ Crossmatch sources:
      --radius 1.0 \
      --environment PDR
 
-For IDR DEEP MER data, the default partition is ``survey``. Use
-``--idr-deep-partition mode`` for CDFS/COSMOS, or ``both`` to query survey
+For public DR1 DEEP MER data, the default partition is ``survey``. Use
+``--deep-partition mode`` for CDFS/COSMOS, or ``both`` to query survey
 first and mode second:
 
 .. code-block:: bash
@@ -23,9 +23,9 @@ first and mode second:
    euclidkit crossmatch \
      --input my_deep_sources.fits \
      --output deep_crossmatch_results.fits \
-     --environment IDR \
-     --idr-field DEEP \
-     --idr-deep-partition both
+     --environment PDR --release DR1 \
+     --field DEEP \
+     --deep-partition both
 
 Query spectra for crossmatched objects:
 
@@ -42,7 +42,7 @@ Query segmentation-map metadata from MER crossmatch results:
    euclidkit query-segmap \
      --input crossmatch_results.fits \
      --output segmentation_maps.fits \
-     --environment IDR
+     --environment PDR --release DR1
 
 The result is the input for local 10 arcsec segmentation-map cutouts:
 
@@ -87,7 +87,7 @@ Compile both Euclid arms via datalink (RGS + BGS):
      --output-dir ./output \
      --prefix compiled_dl \
      --use-datalink \
-     --environment IDR \
+     --environment PDR --release DR1 \
      -L BOTH
 
 Python API example

@@ -28,14 +28,14 @@ def test_query_morph_forwarding(tmp_path, asynchronous):
         assert kwargs['full_async'] == asynchronous
         assert kwargs['async_chunk_size'] == (10 if asynchronous else 500000)
         assert kwargs['idr_deep_partition'] == 'both'
-        factory.assert_called_once_with(environment='IDR')
+        factory.assert_called_once_with(environment='PDR', data_release=None)
         archive.login.assert_called_once()
         archive.logout.assert_called_once()
 
 
 def test_query_morph_help():
     response = CliRunner().invoke(main, ['--help'])
-    assert 'Query IDR MER morphology by object ID.' in response.output
+    assert 'Query MER morphology by object ID.' in response.output
 
 
 def test_query_morph_error(tmp_path):

@@ -22,7 +22,7 @@ if it does not, rerun ``euclidkit crossmatch`` first.
    euclidkit query-segmap \
      --input crossmatch_results.fits \
      --output segmentation_maps.fits \
-     --environment IDR
+     --environment PDR --release DR1
 
 Then create cutouts from the local segmentation-map FITS files:
 
@@ -66,11 +66,12 @@ formula:
 It then joins the uploaded tile indices to the environment-specific
 ``mer_segmentation_map`` table:
 
-- ``PDR``: ``q1.mer_segmentation_map``
+- ``PDR`` / ``DR1`` (default): ``dr1.mer_segmentation_map``
+- ``PDR`` / ``Q1``: ``q1.mer_segmentation_map``
 - ``IDR``: ``dr1.mer_segmentation_map``
 - ``OTF`` and ``REG``: ``sedm.mer_segmentation_map``
 
-``--idr-field`` and ``--idr-deep-partition`` are not used here because
+``--field`` and ``--deep-partition`` are not used here because
 ``mer_segmentation_map`` is not split by those MER catalogue partitions.
 
 Cutout output

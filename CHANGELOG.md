@@ -8,6 +8,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ## [Unreleased]
 
 ### Added
+- Public DR1 routing on PDR, explicit Q1 selection via `data_release`/`--release`,
+  neutral field-option aliases, and release provenance in export/recovery manifests.
 - Deterministic per-band Cutana mosaic selection, alternative-product and coverage
   reports, homogeneous band-group catalogues, and `download-cutana-alternatives`.
 - IDR DEEP MER partition selection via `idr_deep_partition` and
@@ -23,6 +25,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
+- PDR now defaults to DR1 instead of Q1; use `--release Q1` for previous public
+  workflows. IDR remains a separate internal service with no public-release flag.
 - Cutana preparation now validates diameters and coordinates, guarantees unique
   source IDs, and checks source centres against archive mosaic footprints.
 - IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by

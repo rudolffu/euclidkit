@@ -13,6 +13,7 @@ Top-level commands
 - ``euclidkit compile-spectra``
 - ``euclidkit dithers-to-parquet``
 - ``euclidkit query-cutana``
+- ``euclidkit download-cutana-alternatives``
 - ``euclidkit cutouts``
 - ``euclidkit query-segmap``
 - ``euclidkit compile-segmap``
@@ -31,16 +32,27 @@ Environment options
 Commands that access the Euclid archive support:
 
 - ``--environment``: ``PDR``, ``IDR``, ``OTF``, ``REG``
-- ``--idr-field`` (IDR-only commands): ``WIDE`` or ``DEEP``
-- ``--idr-deep-partition`` for MER-based IDR DEEP workflows:
+- ``--release``: ``DR1`` (default) or ``Q1``, on PDR only
+- ``--field`` (DR1/IDR catalogue commands): ``WIDE`` or ``DEEP``
+- ``--deep-partition`` for MER-based DR1 DEEP workflows:
   ``survey`` (default), ``mode``, or ``both``
 
 .. _query-morph:
 
+Public release selection
+------------------------
+
+Archive commands accept ``--release DR1|Q1`` on PDR; DR1 is the default.
+Use ``--environment IDR`` without ``--release`` for the independent internal
+service. Legacy ``--idr-field`` and ``--idr-deep-partition`` names remain aliases
+for ``--field`` and ``--deep-partition``. See :doc:`environments` for migration
+and the public table mappings. Public-release-only operations unavailable in
+Q1 fail explicitly rather than reading DR1.
+
 query-morph
 -----------
 
-Query IDR MER morphology by object ID and inner join measurements onto matched
+Query public DR1 MER morphology by object ID and inner join measurements onto matched
 input rows. A prior MER crossmatch is unnecessary if Euclid ``object_id`` values
 are already available. The key is case-insensitive; returned morphology names
 are lowercase. Repeated input IDs retain separate rows. Existing columns with
@@ -50,13 +62,13 @@ the selected measurement names are replaced.
 
    euclidkit query-morph -i sources.fits -o morphology.fits
    euclidkit query-morph -i sources.fits -o deep_morphology.parquet \
-       --idr-field DEEP --idr-deep-partition both --full-async
+       --field DEEP --deep-partition both --full-async
 
-This command is IDR-only. WIDE (default) queries
-``catalogue.mer_morphology_wide_survey`` first, then
-``catalogue.mer_morphology_wide_mode`` for unmatched IDs. DEEP defaults to
-``catalogue.mer_morphology_deep_survey``; ``--idr-deep-partition mode`` selects
-``catalogue.mer_morphology_deep_mode``. ``both`` queries both DEEP partitions
+This command defaults to public DR1 and also supports explicit IDR access. Q1 is unsupported. WIDE (default) queries
+``dr1.mer_morphology_wide_survey`` first, then
+``dr1.mer_morphology_wide_mode`` for unmatched IDs. DEEP defaults to
+``dr1.mer_morphology_deep_survey``; ``--deep-partition mode`` selects
+``dr1.mer_morphology_deep_mode``. ``both`` queries both DEEP partitions
 directly, keeping the survey measurement if an ID occurs in both.
 
 The selection contains each of these columns and its ``_err`` column:
@@ -93,10 +105,10 @@ Example:
      --input my_sources.fits \
      --output crossmatch_results.fits \
      --radius 1.0 \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
-IDR DEEP partition example:
+DR1 DEEP partition example:
 
 .. code-block:: bash
 
@@ -104,9 +116,9 @@ IDR DEEP partition example:
      --input my_sources.fits \
      --output deep_mode_crossmatch.fits \
      --match-mode object-id \
-     --environment IDR \
-     --idr-field DEEP \
-     --idr-deep-partition mode
+     --environment PDR --release DR1 \
+     --field DEEP \
+     --deep-partition mode
 
 Archive user-table example (no re-upload):
 
@@ -116,8 +128,8 @@ Archive user-table example (no re-upload):
      --user-table-name my_table \
      --output crossmatch_results.fits \
      --match-mode object-id \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
 Large-table async example:
 
@@ -146,10 +158,10 @@ Option semantics:
 - ``--drop-empty-columns`` removes columns where every final result value is
   null or missing before saving ``--output``. Zero, ``False``, and empty-string
   columns are retained. Async chunk part files remain raw.
-- ``--idr-deep-partition`` is used only with ``--environment IDR --idr-field DEEP``
+- ``--deep-partition`` is used only with ``--environment PDR --release DR1 --field DEEP``
   for MER-based commands. ``survey`` queries
-  ``catalogue.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS), ``mode`` queries
-  ``catalogue.mer_catalogue_deep_mode`` (CDFS, COSMOS), and ``both`` queries
+  ``dr1.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS), ``mode`` queries
+  ``dr1.mer_catalogue_deep_mode`` (CDFS, COSMOS), and ``both`` queries
   survey first and mode second. The default is ``survey``.
 
 ``--full-async`` behavior:
@@ -174,8 +186,8 @@ Query spectra-source rows for objects in an object-ID or coordinate table.
    euclidkit query-spectra \
      --crossmatch my_spectral_ids.fits \
      --output spectra_sources.fits \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
 Spatial example:
 
@@ -188,8 +200,8 @@ Spatial example:
      --radius 1.0 \
      --ra-col ra \
      --dec-col dec \
-     --environment IDR \
-     --idr-field WIDE
+     --environment PDR --release DR1 \
+     --field WIDE
 
 Matching behavior:
 
@@ -217,8 +229,8 @@ Output columns include ``source_id``, ``ra_obj``, ``dec_obj``,
 ``object_id``. Spatial mode also includes ``input_row_id``, ``input_ra``,
 ``input_dec``, and ``separation_arcsec``; its ``object_id`` is set from the
 matched ``source_id`` for downstream ``compile-spectra`` compatibility. For
-IDR, ``--idr-field WIDE`` queries ``catalogue.spectra_source_wide`` and
-``--idr-field DEEP`` queries ``catalogue.spectra_source_deep``. Other
+public DR1, ``--field WIDE`` queries ``dr1.spectra_source_wide`` and
+``--field DEEP`` queries ``dr1.spectra_source_deep``. Other
 environments use the corresponding ``spectra_source`` table for the selected
 release.
 
@@ -228,7 +240,7 @@ The resulting table is the usual input to ``compile-spectra``. See
 query-zspe
 ----------
 
-Query IDR SPE redshift candidates by ``object_id`` and join the matched SPE
+Query public DR1 SPE redshift candidates by ``object_id`` and join the matched SPE
 columns back to the input table.
 
 .. code-block:: bash
@@ -237,7 +249,7 @@ columns back to the input table.
      --crossmatch crossmatch_results.fits \
      --output zspe_matches.fits \
      --object-type qso \
-     --idr-field WIDE
+     --field WIDE
 
 ``query-zspe`` supports ``--object-type qso|galaxy``. WIDE queries search the
 ``wide_survey`` candidate table first and then use ``wide`` as the fallback for
@@ -281,8 +293,7 @@ Datalink dual-arm FITS example:
      --output-dir ./output \
      --prefix compiled_dl \
      --use-datalink \
-     --environment IDR \
-     --schema sedm \
+     --environment PDR --release DR1 \
      -L BOTH
 
 Option semantics:
@@ -313,11 +324,11 @@ use Datalink.
      --output-prefix ./output/raw_sir \
      --lambda-range RGS \
      --workers 8 \
-     --environment IDR
+     --environment PDR --release DR1
 
 Per-dither parquet rows are automatically annotated with ``obs_time_mjd``,
 ``obs_time_utc``, and ``pa`` from the environment raw-frame table
-(``q1.raw_frame`` for PDR/Q1, ``dr1.raw_frame`` for IDR/DR1, and
+(``dr1.raw_frame`` for PDR/DR1, ``q1.raw_frame`` for PDR/Q1, and
 ``sedm.raw_frame`` for OTF/REG), joined on ``pointing_id`` and
 ``grism_wheel_pos = gwa_pos``.
 
@@ -337,7 +348,7 @@ Example:
      --cutout-size arcsec \
      --cutout-size-value 15
 
-IDR DEEP example:
+DR1 DEEP example:
 
 .. code-block:: bash
 
@@ -346,9 +357,9 @@ IDR DEEP example:
      --output cutana_deep.csv \
      --instrument NISP \
      --nisp-filters NIR_Y,NIR_H \
-     --environment IDR \
-     --idr-field DEEP \
-     --idr-deep-partition both \
+     --environment PDR --release DR1 \
+     --field DEEP \
+     --deep-partition both \
      --cutout-size arcsec \
      --cutout-size-value 15
 
@@ -390,7 +401,7 @@ stable IDs. Extra metadata uses the first input row for each object/position.
 Coverage reports describe sources resolved through MER, not unresolved input IDs.
 
 download-cutana-alternatives
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Download the unselected candidates later, without repeating the source query:
 
@@ -399,11 +410,10 @@ Download the unselected candidates later, without repeating the source query:
    euclidkit download-cutana-alternatives \
      --candidates cutana_input.alternatives.csv \
      --output-dir alternative_mosaics \
-     --environment IDR \
-     --schema sedm
+     --environment PDR --release DR1
 
-Use the original query's archive environment and the product service's schema
-(default ``sedm``). Each distinct alternative filename is downloaded once with
+Use the original query's archive environment, release and product service's schema
+(the default follows the selected release; ``--schema`` overrides it). Each distinct alternative filename is downloaded once with
 Astroquery's ``get_product(file_name=...)``. Existing nonempty files are reused;
 new downloads are staged so interrupted transfers are not treated as complete.
 The alternatives table can be filtered before downloading. This command does
@@ -432,7 +442,7 @@ Example:
    euclidkit query-segmap \
      --input crossmatch_results.fits \
      --output segmentation_maps.fits \
-     --environment IDR
+     --environment PDR --release DR1
 
 ``query-segmap`` computes ``tile_index`` locally as
 ``floor(SEGMENTATION_MAP_ID / 1_000_000)`` and joins that value to the

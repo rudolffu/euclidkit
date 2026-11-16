@@ -1,6 +1,12 @@
 API Overview
 ============
 
+``EuclidArchive(environment='PDR', data_release=None)`` defaults to public DR1.
+Use ``data_release='Q1'`` for public Q1. For independent IDR, OTF and REG
+services, omit ``data_release``; named public releases there are rejected.
+Existing Python ``idr_field`` and ``idr_deep_partition`` keywords apply to DR1
+as well as IDR. See :doc:`environments` for the complete routing and migration.
+
 Core classes
 ------------
 
@@ -9,7 +15,7 @@ MER morphology
 
 ``EuclidArchive.query_morphology(source_table, output_file=None,
 idr_field="WIDE", idr_deep_partition="survey", full_async=False,
-async_chunk_size=500000)`` queries IDR morphology and inner joins matched input
+async_chunk_size=500000)`` queries DR1/IDR morphology and inner joins matched input
 rows on case-insensitive ``object_id``. It returns an Astropy table in sync mode
 or job/manifest metadata in async mode, which requires ``output_file``.
 The input is not modified. IDs must be non-null int64 values or integer strings;
@@ -20,7 +26,7 @@ floating-point IDs are rejected to avoid identifier precision loss.
    from astropy.table import Table
    from euclidkit.core.data_access import EuclidArchive
 
-   archive = EuclidArchive(environment="IDR")
+   archive = EuclidArchive(environment="PDR", data_release="DR1")
    archive.login()
    try:
        morphology = archive.query_morphology(
@@ -58,11 +64,11 @@ value is null or missing before saving and returning the table. Zero, ``False``,
 and empty strings are preserved. For async crossmatch workflows, intermediate
 part files are left unchanged and only the final merged output is pruned.
 
-IDR DEEP MER partition selection:
+Public DR1 DEEP MER partition selection:
 
 .. code-block:: python
 
-   archive = EuclidArchive(environment="IDR")
+   archive = EuclidArchive(environment="PDR", data_release="DR1")
    archive.login()
 
    # Default DEEP partition is "survey" (EDFN, EDFF, EDFS).
@@ -157,14 +163,14 @@ Use ``dithers_to_parquet`` to export the combined spectrum and matching
        workers=8,
        lambda_range="RGS",
        include_combined=True,
-       environment="IDR",
+       environment="PDR", data_release="DR1",
        credentials_file="~/.euclidkit/.cred.txt",
    )
 
 ``dithers_to_parquet`` returns ``DithersParquetStats`` with object counts,
 combined/dither row counts, raw-frame metadata match counts, output part paths,
 manifest path, and optional failures JSONL path. It automatically queries
-``q1.raw_frame`` for PDR/Q1, ``dr1.raw_frame`` for IDR/DR1, or
+``dr1.raw_frame`` for PDR/DR1, ``q1.raw_frame`` for PDR/Q1, or
 ``sedm.raw_frame`` for OTF/REG to annotate per-dither rows with observation
 metadata. ``SpectrumCompiler`` remains available for legacy multi-extension
 FITS compilation and Datalink FITS outputs.

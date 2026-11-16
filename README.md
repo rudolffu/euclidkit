@@ -16,7 +16,14 @@ A comprehensive Python package for Euclid archival data analysis, designed for u
 
 The package is designed for efficient archive querying and Euclid spectrum compilation workflows.
 
-## MER Morphology (IDR)
+## Public data releases
+
+PDR now defaults to **DR1**. Select the earlier release with `--release Q1` or
+`EuclidArchive(data_release='Q1')`. Keep `--environment IDR` for the separate
+internal service and omit `--release` there. Migration and routing details are
+in `docs/source/environments.rst`.
+
+## MER Morphology (public DR1)
 
 Query compact morphology measurements from a local table containing Euclid
 `object_id` values (case-insensitive):
@@ -27,7 +34,7 @@ euclidkit query-morph -i sources.fits -o morphology.parquet --full-async
 
 The output inner joins matched input rows with CAS, M20, Gini, VIS Sersic radius,
 axis ratio and index, Sersic angle, flux radius, and their uncertainties. WIDE
-uses survey-first fallback; DEEP supports `--idr-deep-partition survey|mode|both`
+uses survey-first fallback; DEEP supports `--deep-partition survey|mode|both`
 (default `survey`). See the [CLI reference](https://euclidkit.readthedocs.io/en/latest/cli.html#query-morph)
 for units, selected columns, and async recovery.
 
@@ -147,31 +154,31 @@ euclidkit crossmatch \
     --full-async \
     --async-chunk-size 500000
 
-# When using the IDR environment the command defaults to the WIDE field and
-# writes results to wide_<filename>. Use --idr-field DEEP to query DEEP MER.
+# When using public DR1 or the IDR environment the command defaults to the WIDE field and
+# writes results to wide_<filename>. Use --field DEEP to query DEEP MER.
 # DEEP defaults to the deep_survey partition (EDFN, EDFF, EDFS).
 euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
-    --environment IDR \
-    --idr-field DEEP
+    --environment PDR --release DR1 \
+    --field DEEP
 
 # Query the deep_mode partition (CDFS, COSMOS), or use "both" for
 # deep_survey followed by deep_mode.
 euclidkit crossmatch \
     --input my_sources.csv \
     --output crossmatch_results.fits \
-    --environment IDR \
-    --idr-field DEEP \
-    --idr-deep-partition mode
+    --environment PDR --release DR1 \
+    --field DEEP \
+    --deep-partition mode
 
 # Crossmatch an already-uploaded archive user table (no local upload needed)
 euclidkit crossmatch \
     --user-table-name my_table \
     --output crossmatch_results.fits \
     --match-mode object-id \
-    --environment IDR \
-    --idr-field WIDE
+    --environment PDR --release DR1 \
+    --field WIDE
 ```
 
 `--full-async` behavior:
@@ -214,8 +221,8 @@ euclidkit upload-table \
 euclidkit query-spectra \
     --crossmatch my_spectral_ids_or_coordinates.fits \
     --output spectra_sources.fits \
-    --environment IDR \
-    --idr-field WIDE \
+    --environment PDR --release DR1 \
+    --field WIDE \
     --verbose
 ```
 
@@ -237,7 +244,7 @@ compilation guide for the full Datalabs and Datalink workflow details.
 euclidkit query-segmap \
     --input crossmatch_results.fits \
     --output segmentation_maps.fits \
-    --environment IDR
+    --environment PDR --release DR1
 
 # Create one raw-label 10 arcsec FITS cutout per source row
 euclidkit compile-segmap \
@@ -246,8 +253,8 @@ euclidkit compile-segmap \
 ```
 
 `query-segmap` computes `tile_index = floor(SEGMENTATION_MAP_ID / 1_000_000)`
-locally, then joins to `q1.mer_segmentation_map` for PDR,
-`dr1.mer_segmentation_map` for IDR, and `sedm.mer_segmentation_map` for OTF/REG.
+locally, then joins to `dr1.mer_segmentation_map` for PDR/DR1,
+`q1.mer_segmentation_map` for PDR/Q1, and `sedm.mer_segmentation_map` for OTF/REG.
 Run `euclidkit crossmatch` first if your table does not yet contain
 `SEGMENTATION_MAP_ID`. `compile-segmap` reads local segmentation-map FITS files
 from `datalabs_path` + `file_name`, groups rows by tile file, and preserves the
@@ -283,9 +290,9 @@ euclidkit query-cutana \
     --output cutana_input_nisp.csv \
     --instrument NISP \
     --nisp-filters NIR_Y,NIR_H \
-    --environment IDR \
-    --idr-field DEEP \
-    --idr-deep-partition both \
+    --environment PDR --release DR1 \
+    --field DEEP \
+    --deep-partition both \
     --cutout-size arcsec \
     --cutout-size-value 15
 ```
@@ -323,7 +330,7 @@ euclidkit compile-spectra \
     --output-dir ./output \
     --prefix compiled_dl \
     --use-datalink \
-    --environment IDR \
+    --environment PDR --release DR1 \
     --schema sedm \
     -L BOTH
 
@@ -333,14 +340,14 @@ euclidkit dithers-to-parquet \
     --output-prefix ./output/raw_sir \
     --workers 8 \
     --lambda-range RGS \
-    --environment IDR
+    --environment PDR --release DR1
 ```
 
 Note: non-Datalink `compile-spectra` now defaults to Parquet and reads `LRANGE` from FITS headers for `-L/--lambda-range` filtering. Datalink remains FITS-only; `RGS`/`BGS` map to corresponding retrieval types, and `BOTH` runs two passes and writes separate `_rgs` and `_bgs` FITS files. `--retrieval-type` is kept for backward compatibility.
 
 `dithers-to-parquet` automatically annotates per-dither rows with
 `obs_time_mjd`, `obs_time_utc`, and `pa` from the archive raw-frame table.
-PDR/Q1 uses `q1.raw_frame`; IDR/DR1 uses `dr1.raw_frame`; OTF/REG use
+PDR/DR1 uses `dr1.raw_frame`; PDR/Q1 uses `q1.raw_frame`; OTF/REG use
 `sedm.raw_frame`. It matches `raw_frame.pointing_id` to the dither HDU `ptgid`
 and requires `raw_frame.grism_wheel_pos = gwa_pos`, falling back to parsed
 `dither_id` only when `ptgid` is unavailable. Internally, it uses a TAP upload
@@ -454,7 +461,8 @@ dither_stats = dithers_to_parquet(
     workers=8,
     lambda_range="RGS",
     include_combined=True,
-    environment="IDR",
+    environment="PDR",
+    data_release="DR1",
 )
 ```
 
@@ -507,7 +515,8 @@ dither_stats = dithers_to_parquet(
     catalog_table='qso_spectra_sources.fits',
     output_prefix='./spectra_parquet/qso_sir',
     lambda_range='RGS',
-    environment='IDR',
+    environment='PDR',
+    data_release='DR1',
 )
 print(f"Wrote {len(dither_stats.dither_output_files)} dither parquet parts")
 
@@ -536,42 +545,26 @@ archive backend:
 - **OTF**: On-the-fly archive environment.
 - **REG**: Regression/testing archive environment.
 
-For **IDR**, you can also select the field with ``--idr-field``:
+Public DR1 is the default: `EuclidArchive()` or `--environment PDR --release DR1`.
+Use `--release Q1` for the earlier public release. Public DR1 queries use `dr1.*`
+tables; Q1 uses `q1.*`. WIDE/DEEP selection uses `--field`; DEEP partition selection
+uses `--deep-partition`. The old `--idr-field` and `--idr-deep-partition` names
+remain accepted aliases, and the Python keywords retain their existing names.
 
-- **WIDE**: Uses the IDR WIDE MER catalogue. This queries
-  ``catalogue.mer_catalogue_wide_survey`` first, then queries
-  ``catalogue.mer_catalogue_wide_mode`` only for sources not matched in the
-  survey table.
-- **DEEP**: Uses IDR DEEP MER partitions. By default this queries
-  ``catalogue.mer_catalogue_deep_survey`` (EDFN, EDFF, EDFS). Use
-  ``--idr-deep-partition mode`` for ``catalogue.mer_catalogue_deep_mode``
-  (CDFS, COSMOS), or ``--idr-deep-partition both`` to query survey first and
-  mode second.
-
-Examples:
+IDR remains an independent internal service. Use `--environment IDR` without a
+public-release flag; it never redirects to PDR. DR2 routing will be validated
+when its internal schema is available. OTF and REG retain their existing routing.
+Authentication behavior is unchanged.
 
 ```bash
-# IDR WIDE (default IDR field)
-euclidkit crossmatch \
-  --input my_sources.fits \
-  --output xmatch_wide.fits \
-  --environment IDR \
-  --idr-field WIDE
+# Public DR1 DEEP, both MER partitions
+euclidkit crossmatch -i sources.fits -o dr1_deep.fits --field DEEP --deep-partition both
 
-# IDR DEEP
-euclidkit crossmatch \
-  --input my_sources.fits \
-  --output xmatch_deep.fits \
-  --environment IDR \
-  --idr-field DEEP
+# Earlier public Q1
+euclidkit crossmatch -i sources.fits -o q1_matches.fits --release Q1
 
-# IDR DEEP mode partition
-euclidkit crossmatch \
-  --input my_sources.fits \
-  --output xmatch_deep_mode.fits \
-  --environment IDR \
-  --idr-field DEEP \
-  --idr-deep-partition mode
+# Explicit internal service
+euclidkit query-morph -i sources.fits -o internal_morphology.fits --environment IDR
 ```
 
 ## Contributing

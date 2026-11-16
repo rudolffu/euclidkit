@@ -21,7 +21,8 @@ from euclidkit.core.spectra_parquet import (
 
 
 def test_raw_frame_table_name_mapping():
-    assert _raw_frame_table_name("PDR") == "q1.raw_frame"
+    assert _raw_frame_table_name("PDR") == "dr1.raw_frame"
+    assert _raw_frame_table_name("PDR", "Q1") == "q1.raw_frame"
     assert _raw_frame_table_name("IDR") == "dr1.raw_frame"
     assert _raw_frame_table_name("OTF") == "sedm.raw_frame"
     assert _raw_frame_table_name("REG") == "sedm.raw_frame"

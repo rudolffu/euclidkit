@@ -70,16 +70,21 @@ def _flux_to_abmag(flux: np.ndarray, zeropoint: float = 23.9) -> np.ndarray:
 class EuclidArchive:
     """Main interface to Euclid science archive."""
     
-    def __init__(self, environment: str = 'PDR'):
+    def __init__(self, environment: str = 'PDR', data_release: Optional[str] = None):
         """
         Initialize Euclid archive client.
         
         Parameters
         ----------
         environment : str
-            Archive environment: 'PDR', 'OTF', 'REG', or 'IDR'
+            Archive environment: 'PDR', 'OTF', 'REG', or 'IDR'.
+        data_release : str, optional
+            Public PDR release: 'DR1' (default) or 'Q1'. Omit for internal services.
         """
-        self.environment = environment
+        from euclidkit.core.archive_service import ArchiveService
+        self.service = ArchiveService(environment, data_release)
+        self.environment = self.service.environment
+        self.data_release = self.service.data_release
         self.euclid = None
         self._logged_in = False
         
@@ -386,7 +391,7 @@ class EuclidArchive:
             When ``True``, ``source_id`` is also accepted as a fallback join key
             to MER ``object_id`` if ``object_id`` columns are absent.
         idr_field : {'WIDE', 'DEEP'}, optional
-            IDR field selector. Only used when environment='IDR' and mer_table is not
+            DR1/IDR field selector. Used for release-aware MER routing when mer_table is not
             explicitly provided. Defaults to 'WIDE'.
         idr_deep_partition : {'survey', 'mode', 'both'}, default 'survey'
             IDR DEEP MER partition to query when ``idr_field='DEEP'``.
@@ -508,6 +513,7 @@ class EuclidArchive:
                 manifest: Dict[str, Any] = {
                     'type': 'euclidkit_crossmatch_async_chunked',
                     'environment': self.environment,
+                    'data_release': self.data_release,
                     'submitted_at_utc': _utc_timestamp(),
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
@@ -528,7 +534,7 @@ class EuclidArchive:
                     tables_for_chunk = [mer_tables[0]]
                     if use_wide_fallback:
                         logger.info(
-                            "IDR WIDE fallback chunk %d: querying wide_survey first",
+                            "MER WIDE fallback chunk %d: querying wide_survey first",
                             idx,
                         )
                     else:
@@ -617,7 +623,7 @@ class EuclidArchive:
                             dec_col=dec_col,
                         )
                         logger.info(
-                            "IDR WIDE fallback chunk %d: %d/%d rows unmatched in wide_survey",
+                            "MER WIDE fallback chunk %d: %d/%d rows unmatched in wide_survey",
                             idx,
                             len(unmatched_batch),
                             len(batch),
@@ -656,7 +662,7 @@ class EuclidArchive:
                             part_files.append(part_path)
                             status = 'COMPLETED'
                             logger.info(
-                                "Saved IDR WIDE fallback chunk %d for %s (%d rows) to %s",
+                                "Saved MER WIDE fallback chunk %d for %s (%d rows) to %s",
                                 idx, mode_table, chunk_rows, part_path
                             )
                         except Exception as exc:
@@ -728,6 +734,7 @@ class EuclidArchive:
                 return {
                     'type': 'euclidkit_crossmatch_async_chunked',
                     'environment': self.environment,
+                    'data_release': self.data_release,
                     'submitted_at_utc': manifest['submitted_at_utc'],
                     'row_count': len(user_data),
                     'chunk_size': async_chunk_size,
@@ -805,7 +812,7 @@ class EuclidArchive:
                     dec_col=dec_col,
                 )
                 logger.info(
-                    "IDR WIDE fallback async mode: %d/%d rows unmatched in wide_survey",
+                    "MER WIDE fallback async mode: %d/%d rows unmatched in wide_survey",
                     len(unmatched_data),
                     len(user_data),
                 )
@@ -835,7 +842,7 @@ class EuclidArchive:
                     job = submission.get('job')
                     try:
                         logger.info(
-                            "Attempting to download IDR WIDE fallback async job %s against %s",
+                            "Attempting to download MER WIDE fallback async job %s against %s",
                             getattr(job, 'jobid', None),
                             table_name,
                         )
@@ -865,6 +872,7 @@ class EuclidArchive:
             combined_job_info = {
                 'type': 'euclidkit_crossmatch_async_job',
                 'environment': self.environment,
+                'data_release': self.data_release,
                 'submitted_at_utc': _utc_timestamp(),
                 'job_id': job_infos[0].get('job_id') if len(job_infos) == 1 else None,
                 'job_ids': [info.get('job_id') for info in job_infos if info.get('job_id')],
@@ -955,7 +963,7 @@ class EuclidArchive:
                     dec_col=dec_col,
                 )
                 logger.info(
-                    "IDR WIDE fallback batch %d/%d: %d/%d rows unmatched in wide_survey",
+                    "MER WIDE fallback batch %d/%d: %d/%d rows unmatched in wide_survey",
                     idx,
                     total_batches,
                     len(unmatched_batch),
@@ -1428,6 +1436,7 @@ class EuclidArchive:
             manifest: Dict[str, Any] = {
                 'type': 'euclidkit_crossmatch_remote_async_chunked',
                 'environment': self.environment,
+                'data_release': self.data_release,
                 'submitted_at_utc': _utc_timestamp(),
                 'user_table': user_table_ref,
                 'mer_table': mer_tables[0] if len(mer_tables) == 1 else None,
@@ -1564,6 +1573,7 @@ class EuclidArchive:
                 return {
                     'type': 'euclidkit_crossmatch_remote_async_chunked',
                     'environment': self.environment,
+                    'data_release': self.data_release,
                     'results_downloaded': True,
                     'result_row_count': len(final_result),
                     'chunk_count': len(manifest['chunks']),
@@ -1617,6 +1627,7 @@ class EuclidArchive:
             return {
                 'type': 'euclidkit_crossmatch_remote_async',
                 'environment': self.environment,
+                'data_release': self.data_release,
                 'job_id': job_ids[0] if len(job_ids) == 1 else None,
                 'job_ids': job_ids,
                 'mer_tables': mer_tables,
@@ -1650,48 +1661,18 @@ class EuclidArchive:
         idr_deep_partition: str = 'survey',
     ) -> List[str]:
         """Get MER catalogue table names for current environment."""
-        if self.environment == 'IDR':
-            field = (idr_field or 'WIDE').upper()
-            valid_fields = {'WIDE', 'DEEP'}
-            if field not in valid_fields:
-                raise ValueError(
-                    f"Invalid IDR field '{idr_field}'. Expected one of {sorted(valid_fields)}"
-                )
-            if field == 'WIDE':
-                return [
-                    'catalogue.mer_catalogue_wide_survey',
-                    'catalogue.mer_catalogue_wide_mode',
-                ]
-            partition = (idr_deep_partition or 'survey').lower()
-            valid_partitions = {'survey', 'mode', 'both'}
-            if partition not in valid_partitions:
-                raise ValueError(
-                    f"Invalid IDR DEEP partition '{idr_deep_partition}'. "
-                    f"Expected one of {sorted(valid_partitions)}"
-                )
-            if partition == 'survey':
-                return ['catalogue.mer_catalogue_deep_survey']
-            if partition == 'mode':
-                return ['catalogue.mer_catalogue_deep_mode']
-            return [
-                'catalogue.mer_catalogue_deep_survey',
-                'catalogue.mer_catalogue_deep_mode',
-            ]
-        
-        table_names = {
-            'PDR': 'catalogue.mer_catalogue',
-            'OTF': 'catalogue.mer_catalogue',
-            'REG': 'catalogue.mer_final_catalog_fits_file_regreproc1_r2'
-        }
-        return [table_names.get(self.environment, 'catalogue.mer_catalogue')]
+        return self.service.mer_tables(idr_field, idr_deep_partition)
+
+    def _get_product_table_name(self, name: str) -> str:
+        return self.service.product_table(name)
 
     @staticmethod
     def _uses_idr_wide_fallback(mer_tables: List[str]) -> bool:
         """Return True when MER tables represent the IDR WIDE survey/mode fallback pair."""
-        return mer_tables == [
-            'catalogue.mer_catalogue_wide_survey',
-            'catalogue.mer_catalogue_wide_mode',
-        ]
+        return (len(mer_tables) == 2
+                and mer_tables[0].rsplit('.', 1)[0] == mer_tables[1].rsplit('.', 1)[0]
+                and [name.rsplit('.', 1)[-1] for name in mer_tables]
+                == ['mer_catalogue_wide_survey', 'mer_catalogue_wide_mode'])
 
     @staticmethod
     def _value_key(value: Any) -> str:
@@ -1845,36 +1826,11 @@ class EuclidArchive:
 
     def _get_spectra_source_table_name(self, idr_field: Optional[str] = None) -> str:
         """Get spectra source table name for current environment."""
-        if self.environment == 'IDR':
-            field = (idr_field or 'WIDE').upper()
-            valid_fields = {'WIDE', 'DEEP'}
-            if field not in valid_fields:
-                raise ValueError(
-                    f"Invalid IDR field '{idr_field}'. Expected one of {sorted(valid_fields)}"
-                )
-            return (
-                'catalogue.spectra_source_wide'
-                if field == 'WIDE'
-                else 'catalogue.spectra_source_deep'
-            )
-
-        prefix_by_env = {
-            'PDR': 'q1',
-            'OTF': 'q1',
-            'REG': 'dr1',
-        }
-        prefix = prefix_by_env.get(self.environment, 'q1')
-        return f"{prefix}.spectra_source"
+        return self.service.spectra_table(idr_field)
 
     def _get_segmentation_map_table_name(self) -> str:
         """Get environment-specific MER segmentation-map table name."""
-        table_by_env = {
-            'PDR': 'q1.mer_segmentation_map',
-            'IDR': 'dr1.mer_segmentation_map',
-            'OTF': 'sedm.mer_segmentation_map',
-            'REG': 'sedm.mer_segmentation_map',
-        }
-        return table_by_env.get(self.environment, 'q1.mer_segmentation_map')
+        return self.service.product_table('mer_segmentation_map')
 
     @staticmethod
     def _case_insensitive_column(table: Table, column_name: str) -> Optional[str]:
@@ -2199,6 +2155,7 @@ class EuclidArchive:
         job_info = {
             'type': 'euclidkit_crossmatch_async_job',
             'environment': self.environment,
+            'data_release': self.data_release,
             'submitted_at_utc': _utc_timestamp(),
             'job_id': job_id,
             'job_phase': job_phase,
@@ -2419,25 +2376,8 @@ class EuclidArchive:
         object_type: str = "qso",
         idr_field: Optional[str] = None,
     ) -> List[Tuple[str, str]]:
-        """Resolve IDR SPE redshift candidate tables and provenance labels."""
-        if self.environment != "IDR":
-            raise ValueError("query-zspe is only supported for the IDR environment")
-
-        normalized_type = object_type.lower()
-        if normalized_type not in {"qso", "galaxy"}:
-            raise ValueError("object_type must be one of: qso, galaxy")
-
-        field = (idr_field or "WIDE").upper()
-        if field not in {"WIDE", "DEEP"}:
-            raise ValueError("idr_field must be one of: WIDE, DEEP")
-
-        prefix = f"catalogue.spectro_z_spe_{normalized_type}_candidates"
-        if field == "WIDE":
-            return [
-                (f"{prefix}_wide_survey", "wide_survey"),
-                (f"{prefix}_wide", "wide"),
-            ]
-        return [(f"{prefix}_deep", "deep")]
+        """Resolve DR1/IDR SPE redshift candidate tables and provenance labels."""
+        return self.service.zspe_tables(object_type, idr_field)
 
     def _query_zspe_batch(self, batch: Table, table_name: str, source_label: str) -> Table:
         """Query one SPE redshift candidate table for a batch of object IDs."""
@@ -2603,11 +2543,12 @@ class EuclidArchive:
         async_chunk_size: int = 500000,
     ) -> Union[Table, Dict[str, Any]]:
         """
-        Query IDR SPE redshift candidate catalogues for object IDs.
+        Query public DR1 or internal SPE redshift candidate catalogues for object IDs.
 
         WIDE queries use wide_survey first, then submit only unmatched object IDs
         to the wide table.
         """
+        self.service.require_fields('SPE candidate queries')
         if not self._logged_in:
             logger.warning("Not logged in - attempting login with default credentials")
             self.login()
@@ -2661,6 +2602,7 @@ class EuclidArchive:
                 manifest: Dict[str, Any] = {
                     "type": "euclidkit_zspe_async_chunked",
                     "environment": self.environment,
+                    "data_release": self.data_release,
                     "submitted_at_utc": _utc_timestamp(),
                     "row_count": len(user_table),
                     "chunk_size": async_chunk_size,
@@ -2734,6 +2676,7 @@ class EuclidArchive:
                 return {
                     "type": "euclidkit_zspe_async_chunked",
                     "environment": self.environment,
+                    "data_release": self.data_release,
                     "submitted_at_utc": manifest["submitted_at_utc"],
                     "row_count": len(user_table),
                     "chunk_size": async_chunk_size,
@@ -2762,6 +2705,7 @@ class EuclidArchive:
             job_info: Dict[str, Any] = {
                 "type": "euclidkit_zspe_async_job",
                 "environment": self.environment,
+                "data_release": self.data_release,
                 "submitted_at_utc": _utc_timestamp(),
                 "job_id": job_id,
                 "job_phase": _job_attr("phase"),
@@ -2820,7 +2764,7 @@ class EuclidArchive:
                 mask = [self._value_key(value) not in matched for value in batch["object_id"]]
                 unmatched = batch[mask]
                 logger.info(
-                    "IDR WIDE SPE fallback batch: %d/%d objects unmatched in wide_survey",
+                    "WIDE SPE fallback batch: %d/%d objects unmatched in wide_survey",
                     len(unmatched),
                     len(batch),
                 )
@@ -2957,7 +2901,7 @@ class EuclidArchive:
         output_file : str or Path, optional
             Output file path to save results
         idr_field : {'WIDE', 'DEEP'}, optional
-            IDR field selector. Used only when environment='IDR'. Defaults to
+            DR1/IDR field selector. Defaults to
             'WIDE' if not provided.
         match_mode : {'auto', 'object-id', 'spatial'}, default 'auto'
             Match by object ID, sky position, or auto-detect from input columns.

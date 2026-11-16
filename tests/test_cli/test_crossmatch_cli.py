@@ -416,7 +416,7 @@ class TestCrossmatchCLI:
                     call_args = mock_archive.crossmatch_sources.call_args
                     assert call_args[1]['idr_field'] == 'DEEP'
                     assert call_args[1]['idr_deep_partition'] == 'mode'
-                    assert "IDR DEEP partition: mode" in result.output
+                    assert "DEEP partition: mode" in result.output
 
         finally:
             os.unlink(input_file)
@@ -733,7 +733,7 @@ class TestQueryZspeCLI:
         self.crossmatch_table.write(temp_file.name, format='fits', overwrite=True)
         return temp_file.name
 
-    def test_query_zspe_defaults_to_qso_wide_idr(self):
+    def test_query_zspe_defaults_to_qso_wide_pdr(self):
         """query-zspe should default to IDR QSO WIDE candidate lookup."""
         crossmatch_file = self.create_temp_crossmatch_file()
         try:
@@ -756,7 +756,7 @@ class TestQueryZspeCLI:
                         ])
 
                     assert result.exit_code == 0
-                    mock_archive_class.assert_called_once_with(environment='IDR')
+                    mock_archive_class.assert_called_once_with(environment='PDR', data_release=None)
                     mock_archive.query_zspe_candidates.assert_called_once()
                     kwargs = mock_archive.query_zspe_candidates.call_args.kwargs
                     assert kwargs['object_type'] == 'qso'
@@ -846,7 +846,7 @@ class TestQuerySegmapCLI:
                         ])
 
                     assert result.exit_code == 0
-                    mock_archive_class.assert_called_once_with(environment='PDR')
+                    mock_archive_class.assert_called_once_with(environment='PDR', data_release=None)
                     mock_archive.login.assert_called_once()
                     mock_archive.query_segmentation_maps.assert_called_once()
                     kwargs = mock_archive.query_segmentation_maps.call_args.kwargs
@@ -879,7 +879,7 @@ class TestQuerySegmapCLI:
                         ])
 
                     assert result.exit_code == 0
-                    mock_archive_class.assert_called_once_with(environment='IDR')
+                    mock_archive_class.assert_called_once_with(environment='IDR', data_release=None)
                     call_kwargs = mock_archive.query_segmentation_maps.call_args.kwargs
                     assert 'idr_field' not in call_kwargs
                     assert 'idr_deep_partition' not in call_kwargs

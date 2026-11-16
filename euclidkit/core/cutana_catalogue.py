@@ -42,7 +42,7 @@ def _identify(frame, ra, dec):
 
 
 def write_catalogue(files, coordinates, output_file, ra, dec, bands, unit, size, keep_columns,
-                    environment=None):
+                    environment=None, data_release=None):
     """Choose nearest image centres per source/band; retain all alternate candidates.
 
     Group catalogues are written for heterogeneous band sets: each can be run with
@@ -83,6 +83,8 @@ def write_catalogue(files, coordinates, output_file, ra, dec, bands, unit, size,
     alternatives = files[files.duplicated(['SourceID', 'filter_name'], keep=False)].copy()
     if isinstance(environment, str):
         alternatives['archive_environment'] = environment
+    if isinstance(data_release, str):
+        alternatives['data_release'] = data_release
     selected = files[files.selected].copy()
     selected['_band_order'] = selected.filter_name.map({b: i for i, b in enumerate(bands)})
     selected = selected.sort_values(['SourceID', '_band_order'])
@@ -135,6 +137,7 @@ def write_catalogue(files, coordinates, output_file, ra, dec, bands, unit, size,
                                  'missing_bands': [b for b in bands if b not in subset]})
     report = {'requested_bands': bands, 'groups': catalogue_groups,
               'archive_environment': environment if isinstance(environment, str) else None,
+              'data_release': data_release if isinstance(data_release, str) else None,
               'alternatives': str(alternatives_path.resolve()),
               'coverage': str(coverage_path.resolve()),
               'sources_without_mosaics': int((~coverage.has_mosaic).sum()),
@@ -148,9 +151,19 @@ def write_catalogue(files, coordinates, output_file, ra, dec, bands, unit, size,
     return result
 
 
-def download_alternatives(archive, candidates_file, output_dir, schema='sedm'):
+def download_alternatives(archive, candidates_file, output_dir, schema=None):
     """Download distinct unselected files from an alternatives CSV; resume existing files."""
+    from euclidkit.core.archive_service import ArchiveService, product_schema_for_client
+    schema = product_schema_for_client(archive, schema, getattr(archive, 'data_release', None)
+                                       if isinstance(getattr(archive, 'data_release', None), str) else None)
     candidates = pd.read_csv(candidates_file)
+    if isinstance(getattr(archive, 'service', None), ArchiveService):
+        for column, expected in [('archive_environment', archive.environment),
+                                 ('data_release', archive.data_release)]:
+            if column in candidates:
+                values = set(candidates[column].dropna().astype(str))
+                if values and values != {expected}:
+                    raise ValueError(f'Alternatives belong to {column}={sorted(values)}; select the matching service/release')
     if not {'selected', 'file_name'} <= set(candidates):
         raise ValueError('Alternatives table requires selected and file_name columns')
     selected = candidates.selected.astype(str).str.lower()

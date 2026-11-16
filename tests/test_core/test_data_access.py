@@ -56,23 +56,23 @@ class TestEuclidArchive:
     def test_get_mer_table_name(self):
         """Test MER table name generation for different environments."""
         test_cases = [
-            ('PDR', 'catalogue.mer_catalogue'),
-            ('IDR', 'catalogue.mer_catalogue'),
+            ('PDR', 'dr1.mer_catalogue_wide_survey'),
+            ('IDR', 'catalogue.mer_catalogue_wide_survey'),
             ('OTF', 'catalogue.mer_catalogue'),
-            ('REG', 'test.mer_catalogue')
+            ('REG', 'catalogue.mer_final_catalog_fits_file_regreproc1_r2')
         ]
         
         for env, expected in test_cases:
             archive = EuclidArchive(environment=env)
-            assert archive.get_mer_table_name() == expected
+            assert archive._get_mer_table_name() == expected
 
     def test_get_spectra_source_table_name(self):
         """Spectra source table should map to the expected release prefix by environment."""
         test_cases = [
-            ('PDR', 'q1.spectra_source'),
+            ('PDR', 'dr1.spectra_source_wide'),
             ('OTF', 'q1.spectra_source'),
             ('REG', 'dr1.spectra_source'),
-            ('IDR', 'dr1.spectra_source'),
+            ('IDR', 'catalogue.spectra_source_wide'),
         ]
 
         for env, expected in test_cases:
@@ -82,7 +82,7 @@ class TestEuclidArchive:
     def test_get_segmentation_map_table_name(self):
         """Segmentation-map table should map to the expected release by environment."""
         test_cases = [
-            ('PDR', 'q1.mer_segmentation_map'),
+            ('PDR', 'dr1.mer_segmentation_map'),
             ('IDR', 'dr1.mer_segmentation_map'),
             ('OTF', 'sedm.mer_segmentation_map'),
             ('REG', 'sedm.mer_segmentation_map'),

@@ -1,4 +1,4 @@
-"""IDR MER morphology queries and input-table enrichment."""
+"""DR1/IDR MER morphology queries and input-table enrichment."""
 
 import logging
 import re
@@ -99,11 +99,9 @@ def query_morphology(archive, source_table, output_file=None, idr_field='WIDE',
                      idr_deep_partition='survey', full_async=False,
                      async_chunk_size=500000):
     """Query unique IDs and inner join compact morphology measurements to input rows."""
-    if archive.environment != 'IDR':
-        raise ValueError('MER morphology queries currently support only the IDR environment.')
     source, upload = _prepare_input(source_table)
     mer_tables = archive._get_mer_table_names(idr_field, idr_deep_partition)
-    tables = [name.replace('mer_catalogue', 'mer_morphology') for name in mer_tables]
+    tables = archive.service.morphology_tables(idr_field, idr_deep_partition)
     wide = archive._uses_idr_wide_fallback(mer_tables)
     if full_async and (output_file is None or not isinstance(async_chunk_size, int)
                        or isinstance(async_chunk_size, bool) or async_chunk_size <= 0):
@@ -139,7 +137,7 @@ def query_morphology(archive, source_table, output_file=None, idr_field='WIDE',
     chunked = len(upload) > async_chunk_size
     metadata = {
         'type': 'euclidkit_morph_async_chunked' if chunked else 'euclidkit_morph_async_job',
-        'environment': 'IDR', 'tables': tables, 'row_count': len(upload),
+        'environment': archive.environment, 'data_release': archive.data_release, 'tables': tables, 'row_count': len(upload),
         'output_file': str(output), 'results_downloaded': False,
         'result_row_count': 0, 'chunk_size': async_chunk_size, 'chunks': [],
     }

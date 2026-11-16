@@ -71,7 +71,7 @@ class TestQueryCutanaCLI:
                 assert call_kwargs['nisp_filters'] == ['NIR_Y', 'NIR_H']
                 assert call_kwargs['cutout_size'] == 'arcsec'
                 assert call_kwargs['cutout_size_value'] == 15.0
-                assert call_kwargs['idr_field'] is None
+                assert call_kwargs['idr_field'] == 'WIDE'
                 assert call_kwargs['idr_deep_partition'] == 'survey'
         finally:
             os.unlink(sources_file)
@@ -228,6 +228,6 @@ def test_download_cutana_alternatives_cli(tmp_path):
         result = CliRunner().invoke(download_cutana_alternatives, ['--candidates', str(source),
             '--output-dir', str(tmp_path/'files'), '--environment', 'IDR', '--schema', 'dr1'])
     assert result.exit_code == 0, result.output
-    archive_class.assert_called_once_with(environment='IDR')
+    archive_class.assert_called_once_with(environment='IDR', data_release=None)
     download.assert_called_once_with(archive_class.return_value, str(source), str(tmp_path/'files'), 'dr1')
     archive_class.return_value.logout.assert_called_once()
