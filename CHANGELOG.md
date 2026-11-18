@@ -7,11 +7,53 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Migration
+- Python 3.11 or later is required.
+- PDR now defaults to public DR1. Add `--release Q1` or
+  `EuclidArchive(data_release="Q1")` to retain the previous public dataset.
+- IDR remains an independent internal service. Omit public-release flags when
+  selecting IDR; it is not redirected to PDR.
+- Use `--field` and `--deep-partition` for DR1/IDR field selection. The legacy
+  `--idr-field` and `--idr-deep-partition` aliases and Python keywords still work.
+
 ### Added
-- Public DR1 routing on PDR, explicit Q1 selection via `data_release`/`--release`,
-  neutral field-option aliases, and release provenance in export/recovery manifests.
+- Public DR1 routing for MER, spectra sources, SPE candidates, morphology,
+  segmentation maps, mosaics and raw-frame queries, with explicit public Q1 selection.
+- `query-morph` and `EuclidArchive.query_morphology` for compact MER morphology
+  measurements, including WIDE fallback, DEEP partitions and asynchronous queries.
 - Deterministic per-band Cutana mosaic selection, alternative-product and coverage
-  reports, homogeneous band-group catalogues, and `download-cutana-alternatives`.
+  reports, and `download-cutana-alternatives` for later retrieval.
+- Band-group Cutana catalogues that retain sources with partial band coverage.
+  Process each group separately with its available channels.
+- Service and release provenance in export manifests and async recovery records.
+
+### Changed
+- Cutana preparation validates sizes and coordinates, guarantees unique source IDs,
+  and checks source centres against archive mosaic footprints.
+- Documentation rewritten for astronomers with task-based guides, a command
+  reference and glossary, and the Furo theme for readable wide tables.
+- Removed tests for retired APIs and refreshed current archive, spectra and I/O
+  tests with isolated credentials and temporary files.
+
+### Fixed
+- Local FITS compilation copies reused HDUs before assigning row-specific headers,
+  preserving identifiers and coordinates for repeated HDU references.
+- Compiled FITS `NSPECTRA` counts written extensions after missing inputs are skipped.
+- Removed `euclidkit-spectra`, `euclidkit-composite` and `euclidkit-pipeline`
+  entry points, which referenced modules that were not shipped.
+- Diagnostics use the configured credentials location and report available data
+  volumes. Standalone `--check-data` and `--check-desi` checks no longer crash.
+- Package license metadata now matches BSD-3-Clause, and `requirements.txt`
+  includes `pyarrow`.
+
+## Earlier releases (0.2.1–0.2.4)
+
+The following consolidated notes were previously listed under Unreleased;
+they describe changes already present in v0.2.4.
+
+### Added
 - IDR DEEP MER partition selection via `idr_deep_partition` and
   `--idr-deep-partition` for MER crossmatch and Cutana workflows.
 - Optional empty-column pruning for crossmatch outputs via
@@ -25,19 +67,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   FITS cutouts from MER segmentation-map tiles.
 
 ### Changed
-- Python 3.11 or later is now required (`requires-python = ">=3.11"`); the
-  documentation already stated this, and the metadata previously allowed 3.9.
-- Documentation theme changed from Read the Docs to Furo, which wraps wide
-  tables instead of clipping them.
-- Documentation rewritten for astronomers: task-based guides for catalogues,
-  spectra, image cutouts and segmentation maps, a command reference, and a
-  glossary. The README is now a short overview that links to the full docs.
-- Removed tests for retired APIs and refreshed current archive, spectra and I/O
-  behavior tests with isolated credentials and temporary files.
-- PDR now defaults to DR1 instead of Q1; use `--release Q1` for previous public
-  workflows. IDR remains a separate internal service with no public-release flag.
-- Cutana preparation now validates diameters and coordinates, guarantees unique
-  source IDs, and checks source centres against archive mosaic footprints.
 - IDR DEEP MER queries now use `catalogue.mer_catalogue_deep_survey` by
   default, with optional `deep_mode` or `both` partition selection.
 - Non-Datalink `compile-spectra` now defaults to Parquet output with automatic
@@ -46,20 +75,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Cutana segmentation-map shortcut now computes
   `floor(segmentation_map_id / 1_000_000)` locally and joins directly on
   `tile_index`, matching `query-segmap`.
-
-### Fixed
-- Removed the `euclidkit-spectra`, `euclidkit-composite` and `euclidkit-pipeline`
-  console scripts, which pointed to modules that were never shipped.
-- `euclidkit diagnostics --check-data` now looks for the credentials file in the
-  configured location (default `~/.euclidkit/.cred.txt`) instead of only
-  `/media/user/cred.txt`, and reports which data volumes it found.
-- `euclidkit diagnostics --check-data` and `--check-desi` no longer crash with
-  `UnboundLocalError` when run without `--check-deps`.
-- Package `__license__` now reads BSD-3-Clause, matching `LICENSE`; `requirements.txt`
-  now lists `pyarrow`.
-- Local FITS compilation now copies a reused source HDU before assigning row-specific
-  headers, preserving identifiers and coordinates for repeated HDU references.
-- Compiled FITS `NSPECTRA` now counts written extensions after missing inputs are skipped.
 
 ## [0.2.0] - 2026-03-02
 
